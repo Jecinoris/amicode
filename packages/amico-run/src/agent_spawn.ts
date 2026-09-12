@@ -303,9 +303,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
       opts.prompt,
     ];
 
+    const childEnv = buildChildEnv(opts.env ?? process.env, extra);
+    // OPENCODE_CONFIG_DIR and OPENCODE_CONFIG_CONTENT are mutually exclusive
+    // config channels. When the DIR path is chosen (AMICO_AGENT_CONFIG_DIR
+    // override), a stale OPENCODE_CONFIG_CONTENT from the parent — set by a
+    // live Amicode session — must not leak through, or the child resolves a
+    // baked config blob instead of the directory it was told to use (#645).
+    if (configDir) delete childEnv.OPENCODE_CONFIG_CONTENT;
+
     const spawnOpts: SpawnOptions = {
       cwd,
-      env: buildChildEnv(opts.env ?? process.env, extra),
+      env: childEnv,
       // stderr is captured for the reason field, stdin ignored — an agent that waits on input
       // would otherwise hang until the timeout with nothing to report.
       stdio: ["ignore", "pipe", "pipe"],
