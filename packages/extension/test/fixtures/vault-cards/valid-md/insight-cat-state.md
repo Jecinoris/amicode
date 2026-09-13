@@ -1,6 +1,7 @@
 ---
 type: insight
 date: 2026-08-22
+session_id: 20260913-cat-state
 source: session-2026-08-21
 evidence:
   - experiments/e-cat.md

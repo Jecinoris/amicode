@@ -2,9 +2,11 @@
   "date": "2026-08-18",
   "platform": "cavity",
   "priority": "p2",
-  "status": "superseded",
+  "session_id": null,
+  "status": "abandoned",
   "tags": [
     "distillation"
   ],
-  "type": "spec"
+  "type": "spec",
+  "visibility": "local"
 }

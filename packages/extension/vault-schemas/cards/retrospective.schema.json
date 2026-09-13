@@ -38,6 +38,14 @@
       "format": "date",
       "type": "string"
     },
+    "outcome": {
+      "enum": [
+        "success",
+        "partial",
+        "failed",
+        "abandoned"
+      ]
+    },
     "provenance": {
       "items": {
         "type": "string"
@@ -54,6 +62,13 @@
     "reviewed_after": {
       "minLength": 1,
       "type": "string"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -72,6 +87,8 @@
   "required": [
     "type",
     "date",
+    "session_id",
+    "outcome",
     "tags"
   ],
   "title": "retrospective card",

@@ -44,7 +44,7 @@
         "high"
       ]
     },
-    "date": {
+    "date_read": {
       "format": "date",
       "type": "string"
     },
@@ -57,6 +57,13 @@
     "provenance_unrecoverable": {
       "type": "boolean"
     },
+    "relevance": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
     "review_by": {
       "format": "date",
       "type": "string"
@@ -65,9 +72,22 @@
       "minLength": 1,
       "type": "string"
     },
+    "session_id": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "subject": {
       "minLength": 1,
       "type": "string"
+    },
+    "systems": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "tags": {
       "items": {
@@ -75,15 +95,23 @@
       },
       "type": "array"
     },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
     "type": {
       "const": "paper"
     }
   },
   "required": [
     "type",
-    "date",
     "arxiv",
+    "title",
     "authors",
+    "date_read",
+    "session_id",
+    "relevance",
+    "systems",
     "tags"
   ],
   "title": "paper card",

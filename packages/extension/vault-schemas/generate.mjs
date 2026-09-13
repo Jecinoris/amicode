@@ -49,66 +49,85 @@ const SENTINEL_RULE = {
   },
 };
 
-// The 12 legacy (schema-check) types: properties + required per the
-// amico-schema-check table, extension fields optional on all.
+// The 12 legacy (schema-check) types — aligned to `amico-vault`'s YAML
+// Frontmatter Schemas, the single owner since PR #1052 (skills-integrity
+// F26: the old amico-schema-check table had drifted — insight's phantom
+// required `source`, paper's wrong `date`, missing session_id/visibility
+// floors, etc.). Required sets mirror the aligned amico-schema-check table
+// field for field; amico-vault's closed vocabularies (task_type, statuses,
+// relevance, outcome, failure_mode, device_class, relationship, visibility,
+// experiment's ingest `source`) are enums; optional/nullable fields
+// (experiment's source_path/warm_started_from, spec's priority/platform/
+// linked_plan, hypothesis's platform, person's contact) are declared but
+// never required — their absence is not a schema violation.
+// session_id is REQUIRED but nullable (uuid on agent notes, null on
+// human-curated ones, present either way — amico-vault "Session ID"):
+// `type: ["string", "null"]` is the honest JSON-Schema union; the shipped
+// subset validator treats a type array as unchecked (under-validation, not
+// mis-validation) while `required` still enforces presence.
+const nullableStr = { type: ["string", "null"], minLength: 1 };
 const LEGACY = {
   experiment: {
     properties: {
-      task_type: str,
+      task_type: { enum: ["experiment", "validation", "regression", "reproduction", "parameter-study"] },
       date,
-      session_id: str,
+      session_id: nullableStr,
+      source: { enum: [null, "demo-ingest", "doc-ingest", "agent"] },
+      source_path: nullableStr,
       platform: str,
       gate: str,
       fidelity: { type: "number", minimum: 0, maximum: 1 },
       duration_us: { type: "number", minimum: 0 },
-      status: str,
+      status: { enum: ["running", "completed", "failed", "stalled"] },
+      failure_mode: { enum: [null, "stagnation", "divergence", "constraint_violation", "infeasible"] },
+      warm_started_from: nullableStr,
       tags: stringArray,
     },
     required: ["type", "task_type", "date", "session_id", "platform", "gate", "fidelity", "duration_us", "status", "tags"],
   },
   insight: {
-    properties: { date, source: str, evidence: stringArray, tags: stringArray },
-    required: ["type", "date", "source", "evidence", "confidence", "tags"],
+    properties: { date, session_id: nullableStr, evidence: stringArray, confidence: { enum: ["high", "medium", "low"] }, tags: stringArray },
+    required: ["type", "date", "session_id", "evidence", "confidence", "tags"],
   },
   hypothesis: {
-    properties: { date, source: str, status: str, evidence: stringArray, tags: stringArray },
-    required: ["type", "date", "source", "status", "evidence", "tags"],
+    properties: { date, session_id: nullableStr, status: { enum: ["open", "untested", "confirmed", "refuted", "abandoned"] }, platform: nullableStr, evidence: stringArray, tags: stringArray },
+    required: ["type", "date", "session_id", "status", "evidence", "tags"],
   },
   method: {
-    properties: { name: str, date, source: str, applicability: str, tags: stringArray },
-    required: ["type", "name", "date", "source", "applicability", "tags"],
+    properties: { name: str, date, session_id: nullableStr, applicability: stringArray, tags: stringArray },
+    required: ["type", "name", "date", "session_id", "applicability", "tags"],
   },
   paper: {
-    properties: { date, arxiv: str, authors: stringArray, tags: stringArray },
-    required: ["type", "date", "arxiv", "authors", "tags"],
+    properties: { arxiv: str, title: str, authors: stringArray, date_read: date, session_id: nullableStr, relevance: { enum: ["high", "medium", "low"] }, systems: stringArray, tags: stringArray },
+    required: ["type", "arxiv", "title", "authors", "date_read", "session_id", "relevance", "systems", "tags"],
   },
   spec: {
-    properties: { date, status: str, priority: str, platform: str, tags: stringArray },
-    required: ["type", "date", "status", "priority", "platform", "tags"],
+    properties: { date, session_id: nullableStr, status: { enum: ["draft", "approved", "in-progress", "completed", "abandoned"] }, priority: nullableStr, platform: nullableStr, linked_plan: nullableStr, tags: stringArray, visibility: { enum: ["local", "team", "public"] } },
+    required: ["type", "date", "session_id", "status", "tags", "visibility"],
   },
   plan: {
-    properties: { date, status: str, tags: stringArray },
-    required: ["type", "date", "status", "tags"],
+    properties: { date, session_id: nullableStr, status: { enum: ["draft", "approved", "executing", "completed", "abandoned", "failed"] }, spec: str, tags: stringArray, visibility: { enum: ["local", "team", "public"] } },
+    required: ["type", "date", "session_id", "status", "spec", "tags", "visibility"],
   },
   retrospective: {
-    properties: { date, tags: stringArray },
-    required: ["type", "date", "tags"],
+    properties: { date, session_id: nullableStr, outcome: { enum: ["success", "partial", "failed", "abandoned"] }, tags: stringArray },
+    required: ["type", "date", "session_id", "outcome", "tags"],
   },
   person: {
-    properties: { name: str, org: str, role: str, tags: stringArray },
+    properties: { name: str, org: str, role: str, contact: nullableStr, tags: stringArray },
     required: ["type", "name", "org", "role", "tags"],
   },
   org: {
-    properties: { name: str, tags: stringArray },
-    required: ["type", "name", "tags"],
+    properties: { name: str, domain: str, relationship: { enum: ["partner", "customer", "academic"] }, tags: stringArray },
+    required: ["type", "name", "domain", "relationship", "tags"],
   },
   device: {
-    properties: { name: str, status: str, platforms: stringArray, tags: stringArray },
-    required: ["type", "name", "status", "platforms", "tags"],
+    properties: { name: str, status: { enum: ["online", "offline", "maintenance"] }, device_class: { enum: ["classical", "quantum"] }, platforms: stringArray, location: str, tags: stringArray },
+    required: ["type", "name", "status", "device_class", "platforms", "location", "tags"],
   },
   meeting: {
-    properties: { date, attendees: stringArray, tags: stringArray },
-    required: ["type", "date", "attendees", "tags"],
+    properties: { date, attendees: stringArray, org: str, topic: str, tags: stringArray },
+    required: ["type", "date", "attendees", "org", "topic", "tags"],
   },
 };
 

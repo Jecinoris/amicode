@@ -61,9 +61,12 @@
       "minLength": 1,
       "type": "string"
     },
-    "source": {
+    "session_id": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -82,7 +85,7 @@
   "required": [
     "type",
     "date",
-    "source",
+    "session_id",
     "evidence",
     "confidence",
     "tags"

@@ -1,5 +1,7 @@
 {
+  "domain": "quantum control",
   "name": "Harmoniqs",
+  "relationship": "partner",
   "tags": [
     "team"
   ],

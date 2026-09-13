@@ -34,6 +34,13 @@
         "high"
       ]
     },
+    "contact": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "name": {
       "minLength": 1,
       "type": "string"

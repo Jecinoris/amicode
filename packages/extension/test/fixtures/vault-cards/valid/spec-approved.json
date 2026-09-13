@@ -3,9 +3,11 @@
   "platform": "transmon",
   "priority": "p1",
   "review_by": "2027-08-21",
+  "session_id": null,
   "status": "approved",
   "tags": [
     "context"
   ],
-  "type": "spec"
+  "type": "spec",
+  "visibility": "local"
 }

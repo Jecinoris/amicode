@@ -3,9 +3,15 @@
   "authors": [
     "Bluvstein"
   ],
-  "date": "2026-08-06",
+  "date_read": "2026-08-06",
+  "relevance": "high",
+  "session_id": null,
+  "systems": [
+    "spin"
+  ],
   "tags": [
     "rydberg"
   ],
+  "title": "2211.15453 study",
   "type": "paper"
 }

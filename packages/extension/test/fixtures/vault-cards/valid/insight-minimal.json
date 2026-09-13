@@ -2,6 +2,7 @@
   "confidence": "medium",
   "date": "2026-08-19",
   "evidence": [],
+  "session_id": null,
   "source": "retro",
   "tags": [],
   "type": "insight"

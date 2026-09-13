@@ -44,6 +44,10 @@
       "format": "date",
       "type": "string"
     },
+    "org": {
+      "minLength": 1,
+      "type": "string"
+    },
     "provenance": {
       "items": {
         "type": "string"
@@ -71,6 +75,10 @@
       },
       "type": "array"
     },
+    "topic": {
+      "minLength": 1,
+      "type": "string"
+    },
     "type": {
       "const": "meeting"
     }
@@ -79,6 +87,8 @@
     "type",
     "date",
     "attendees",
+    "org",
+    "topic",
     "tags"
   ],
   "title": "meeting card",

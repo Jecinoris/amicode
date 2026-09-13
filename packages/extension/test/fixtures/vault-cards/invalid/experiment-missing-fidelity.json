@@ -4,8 +4,8 @@
   "gate": "X",
   "platform": "transmon",
   "session_id": "s",
-  "status": "solved",
+  "status": "completed",
   "tags": [],
-  "task_type": "experiment-sim",
+  "task_type": "experiment",
   "type": "experiment"
 }

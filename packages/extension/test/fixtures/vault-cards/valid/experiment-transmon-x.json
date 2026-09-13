@@ -5,10 +5,10 @@
   "gate": "X",
   "platform": "transmon",
   "session_id": "s1",
-  "status": "solved",
+  "status": "completed",
   "tags": [
     "x-gate"
   ],
-  "task_type": "experiment-sim",
+  "task_type": "experiment",
   "type": "experiment"
 }

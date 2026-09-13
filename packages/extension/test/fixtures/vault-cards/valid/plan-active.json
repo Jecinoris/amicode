@@ -1,8 +1,11 @@
 {
   "date": "2026-08-22",
-  "status": "active",
+  "session_id": null,
+  "spec": "[[spec-20260821-164000-gates]]",
+  "status": "executing",
   "tags": [
     "telaio"
   ],
-  "type": "plan"
+  "type": "plan",
+  "visibility": "local"
 }

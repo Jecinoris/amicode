@@ -38,13 +38,26 @@
       "format": "date",
       "type": "string"
     },
+    "linked_plan": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "platform": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "priority": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "provenance": {
       "items": {
@@ -63,9 +76,21 @@
       "minLength": 1,
       "type": "string"
     },
-    "status": {
+    "session_id": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "approved",
+        "in-progress",
+        "completed",
+        "abandoned"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -79,15 +104,22 @@
     },
     "type": {
       "const": "spec"
+    },
+    "visibility": {
+      "enum": [
+        "local",
+        "team",
+        "public"
+      ]
     }
   },
   "required": [
     "type",
     "date",
+    "session_id",
     "status",
-    "priority",
-    "platform",
-    "tags"
+    "tags",
+    "visibility"
   ],
   "title": "spec card",
   "type": "object"

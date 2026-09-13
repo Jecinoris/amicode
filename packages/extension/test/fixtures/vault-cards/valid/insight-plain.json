@@ -4,6 +4,7 @@
   "evidence": [
     "experiments/e1.md"
   ],
+  "session_id": null,
   "source": "session",
   "tags": [
     "warm-starts"

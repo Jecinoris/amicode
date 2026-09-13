@@ -42,6 +42,15 @@
       "minimum": 0,
       "type": "number"
     },
+    "failure_mode": {
+      "enum": [
+        null,
+        "stagnation",
+        "divergence",
+        "constraint_violation",
+        "infeasible"
+      ]
+    },
     "fidelity": {
       "maximum": 1,
       "minimum": 0,
@@ -74,11 +83,33 @@
     },
     "session_id": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "enum": [
+        null,
+        "demo-ingest",
+        "doc-ingest",
+        "agent"
+      ]
+    },
+    "source_path": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "status": {
-      "minLength": 1,
-      "type": "string"
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "stalled"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -91,11 +122,23 @@
       "type": "array"
     },
     "task_type": {
-      "minLength": 1,
-      "type": "string"
+      "enum": [
+        "experiment",
+        "validation",
+        "regression",
+        "reproduction",
+        "parameter-study"
+      ]
     },
     "type": {
       "const": "experiment"
+    },
+    "warm_started_from": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

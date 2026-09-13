@@ -9,6 +9,6 @@
   "tags": [
     "fock"
   ],
-  "task_type": "experiment-sim",
+  "task_type": "experiment",
   "type": "experiment"
 }

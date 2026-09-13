@@ -44,6 +44,13 @@
       },
       "type": "array"
     },
+    "platform": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "provenance": {
       "items": {
         "type": "string"
@@ -61,13 +68,21 @@
       "minLength": 1,
       "type": "string"
     },
-    "source": {
+    "session_id": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "status": {
-      "minLength": 1,
-      "type": "string"
+      "enum": [
+        "open",
+        "untested",
+        "confirmed",
+        "refuted",
+        "abandoned"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -86,7 +101,7 @@
   "required": [
     "type",
     "date",
-    "source",
+    "session_id",
     "status",
     "evidence",
     "tags"
