@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "publisher": { "identity": "test-publisher", "published_at": "2026-09-13T12:00:00Z" },
+  "freshness": { "counter": 4, "hub_epoch": "33333333-3333-4333-8333-333333333333" },
+  "sections": {
+    "mode": {
+      "value": "fleet",
+      "provenance": { "source": "fleet.json", "parsed_from": "role='client' (vocabulary mapping)" }
+    },
+    "posture": {
+      "value": "ok",
+      "provenance": { "source": "fleet-status.json", "parsed_from": "base default (posture absent = ok)" }
+    },
+    "topology": {
+      "value": {
+        "role": "client",
+        "canonical": { "host": "hq-hub-01.example.internal", "port": 4096, "sshAlias": "hq-hub-01" },
+        "previousBinary": "/home/example/.amico/server/bin/opencode",
+        "previousPort": 4096
+      },
+      "provenance": {
+        "source": "fleet.json",
+        "parsed_from": "topology schema v1 fields: role, canonical, previousBinary, previousPort"
+      }
+    },
+    "health": {
+      "value": {
+        "collected_at": "2026-08-30T22:10:04Z",
+        "devices": [
+          { "name": "atom-01", "reachable": true, "detail": "this machine" },
+          { "name": "ion-02", "reachable": false, "detail": "ssh failed" },
+          { "name": "hub-03", "reachable": true, "detail": "ssh ok" }
+        ],
+        "chat_db": { "sessions": null, "last_session": "null", "server_http": "200" },
+        "server_guard": { "ok": false, "pid": "", "db_file": "none", "served_sessions": 100, "notes": "server not running;" },
+        "vault_sync": { "age_minutes": 0, "clean": true },
+        "repos": [
+          { "name": "lab-notebook", "branch": "main", "dirty": 12, "ahead": 0, "behind": 3, "wip_branches": "wip/alpha" }
+        ]
+      },
+      "provenance": {
+        "source": "fleet-status.json",
+        "parsed_from": "fields: chat_db, collected_at, devices[3], repos[1], server_guard, vault_sync"
+      }
+    },
+    "locks": {
+      "value": { "rows": [{ "session": "ses_0183f2", "holder": "atom-01", "leased_until": "2026-08-30T23:10:04Z" }] },
+      "provenance": { "source": "hub lock state", "parsed_from": "rendered from hub lock state: 1 row(s) — a rendering, never the enforcement" }
+    }
+  }
+}

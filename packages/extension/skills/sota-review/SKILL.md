@@ -15,8 +15,11 @@ decisions; it never blocks the loop (a survey that cannot run records a
 NAMED outcome and the loop proceeds), and its matches **stage before they
 count**: the daily digest and the SOTA watcher append `stage` lines to
 per-campaign SIDECAR staging streams beside the session ledgers, and nothing
-counts as currency until the PI's accept stamp lands. This skill's lenses
-fetch and report — they never append; the staged routing is its own layer.
+counts as currency until the PI's accept stamp lands. (The session ledgers
+here are the campaign session ledgers — running ledgers in the personal
+vault's `sessions/` directory — never the retired transcript substrate.)
+This skill's lenses fetch and report — they never append; the staged routing
+is its own layer.
 
 ## Usage
 

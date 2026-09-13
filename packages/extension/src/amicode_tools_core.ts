@@ -142,16 +142,6 @@ import {
 // the same directory, so a tool call lands in the inventory end-to-end
 // without an HTTP hop and without touching the harness server.
 import { authorWidget } from "./amicode_service/widgets";
-import { readCredential } from "./amicode_service/credentials";
-import {
-  slackPreCheck,
-  slackFetch,
-  resolveTarget,
-  formatMessages,
-  resolveHandles,
-  UserCache,
-  ChannelCache,
-} from "./amicode_service/slack_api";
 
 /** The shipped role cards' directory, for the S3 routing resolver (#860):
  *  the suggestion source + the hand-set `model:` tier. The bundled core
@@ -184,6 +174,14 @@ export interface EngineClientShape {
     fork: (o: unknown) => Promise<unknown>;
     promptAsync: (o: unknown) => Promise<unknown>;
     command: (o: unknown) => Promise<unknown>;
+  };
+  /** Worktree management API — OPTIONAL so existing tests and transports
+   *  that don't use workspace isolation still compile (#1060). */
+  worktree?: {
+    create: (o: unknown) => Promise<unknown>;
+    list: (o?: unknown) => Promise<unknown>;
+    remove: (o: unknown) => Promise<unknown>;
+    reset: (o: unknown) => Promise<unknown>;
   };
 }
 
@@ -1962,7 +1960,10 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         "branching work the USER should see and interact with. When chaining into a specific " +
         "skill (e.g. spawning create-research-environment from a migrate session), pass " +
         "`command` — it uses the engine's command API to invoke the skill directly instead of " +
-        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt.",
+        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt. " +
+        "Pass `workspace` to isolate the child session in its own git worktree — " +
+        "\"create\" provisions a new worktree, a path string reuses an existing one, " +
+        "null (default) inherits the parent directory.",
       args: {
         prompt: {
           type: "string",
@@ -2002,6 +2003,14 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             "reliable for skill-to-skill chaining. The `prompt` text becomes the command's " +
             "`arguments`. Null = send prompt as a regular user message (default).",
         },
+        workspace: {
+          type: ["string", "null"],
+          description:
+            'Workspace isolation for the child session. "create" provisions a new git ' +
+            "worktree and scopes the child to it; a path string reuses an existing worktree " +
+            "(validated as a git worktree of this project); null (default) inherits the parent " +
+            "directory. Requires the experimental worktrees feature to be enabled.",
+        },
       },
       async execute(
         a: {
@@ -2013,6 +2022,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           mode?: string | null;
           force?: boolean | null;
           command?: string | null;
+          workspace?: string | null;
         },
         ctx: AmicodeToolContext,
       ) {
@@ -2073,9 +2083,94 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         const model =
           routed.model ??
           args.model ??
-          (own?.model?.providerID && own?.model?.modelID
+           (own?.model?.providerID && own?.model?.modelID
             ? { providerID: own.model.providerID, modelID: own.model.modelID }
             : null);
+
+        // ── workspace isolation (#1060) ──────────────────────────────────
+        // Resolve the session's working directory: when a workspace is
+        // requested, provision or validate the worktree BEFORE creating any
+        // child sessions. The handler NEVER falls back to the parent
+        // directory on failure — it fails hard with an explicit reason.
+        let sessionDir = ctx.directory ?? "";
+        let worktreeWarning = "";
+        let createdWorktreeDir: string | null = null;
+
+        if (args.workspace !== null) {
+          if (args.workspace === "create") {
+            // Provision a new worktree via the engine's worktree API.
+            if (!engineClient.worktree) {
+              return "Cannot spawn: Workspace isolation requires the experimental worktrees feature to be enabled.";
+            }
+            let wtResult: { directory?: string } | undefined;
+            try {
+              const wtPromise = engineClient.worktree.create({
+                query: { directory: ctx.directory },
+              });
+              // 30-second timeout: abort if worktree creation hangs.
+              const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("__worktree_timeout__")), 30_000),
+              );
+              wtResult = unwrap<{ directory?: string }>(
+                await Promise.race([wtPromise, timeout]),
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (msg === "__worktree_timeout__") {
+                // Best-effort cleanup of the partial worktree.
+                try { await engineClient.worktree.remove({ query: { directory: ctx.directory } }); } catch { /* best-effort */ }
+                return JSON.stringify({ error: "Worktree creation timed out after 30 seconds.", reason: "timeout" });
+              }
+              // Feature gate: translate the API rejection into an actionable message.
+              if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+                return JSON.stringify({ error: "Workspace isolation requires the experimental worktrees feature to be enabled.", reason: "api_rejected" });
+              }
+              return JSON.stringify({ error: `Worktree creation failed: ${msg}`, reason: "api_rejected" });
+            }
+            if (!wtResult?.directory) {
+              return JSON.stringify({ error: "Worktree creation returned no directory.", reason: "api_rejected" });
+            }
+            sessionDir = wtResult.directory;
+            createdWorktreeDir = wtResult.directory;
+          } else {
+            // Validate the given path is a git worktree of this project.
+            try {
+              const dotGitPath = path.join(args.workspace, ".git");
+              const stat = fs.statSync(dotGitPath);
+              if (stat.isFile()) {
+                // .git file in worktrees contains "gitdir: <path>" pointing
+                // back to the main repo's .git directory.
+                const content = fs.readFileSync(dotGitPath, "utf8").trim();
+                if (!content.startsWith("gitdir:")) {
+                  return JSON.stringify({ error: `Path "${args.workspace}" has an invalid .git file — not a git worktree.`, reason: "validation_failed" });
+                }
+                // Verify the gitdir points to a worktrees/ subdirectory of
+                // the main repo's .git directory (basic sanity check).
+                const gitdir = content.slice("gitdir:".length).trim();
+                if (!gitdir.includes("worktrees")) {
+                  return JSON.stringify({ error: `Path "${args.workspace}" does not appear to be a worktree of this project.`, reason: "validation_failed" });
+                }
+              } else if (stat.isDirectory()) {
+                // A .git directory means it's a full repo clone, not a worktree.
+                return JSON.stringify({ error: `Path "${args.workspace}" is a full git repository, not a worktree.`, reason: "validation_failed" });
+              }
+            } catch {
+              return JSON.stringify({ error: `Path "${args.workspace}" is not a valid git worktree — .git not found.`, reason: "validation_failed" });
+            }
+            sessionDir = args.workspace;
+          }
+
+          // Soft warning at 5+ active worktrees (#1060 AC8).
+          if (engineClient.worktree) {
+            try {
+              const listResult = unwrap<Array<unknown>>(await engineClient.worktree.list({ query: { directory: ctx.directory } }));
+              if (Array.isArray(listResult) && listResult.length >= 5) {
+                worktreeWarning = `\nNote: this project already has ${listResult.length} active worktrees. Consider cleaning up unused ones.`;
+              }
+            } catch { /* list failure is non-blocking */ }
+          }
+        }
+
         const base = args.title ?? defaultTitle(args.prompt);
         const spawnMeta = { spawned_by: ctx.sessionID, spawned_depth: depth + 1 };
         const children: SpawnedChild[] = [];
@@ -2087,7 +2182,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
               const forked = unwrap<{ id?: string }>(
                 await engineClient.session.fork({
                   path: { id: ctx.sessionID },
-                  query: { directory: ctx.directory },
+                  query: { directory: sessionDir },
                   body: {},
                 }),
               );
@@ -2098,13 +2193,13 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
                 // Tolerated failure: the child still runs, it just won't
                 // auto-open — the summary below lists it either way.
                 await engineClient.session
-                  .update({ path: { id }, query: { directory: ctx.directory }, body: { metadata: spawnMeta } })
+                  .update({ path: { id }, query: { directory: sessionDir }, body: { metadata: spawnMeta } })
                   .catch(() => undefined);
               }
             } else {
               const created = unwrap<{ id?: string }>(
                 await engineClient.session.create({
-                  query: { directory: ctx.directory },
+                  query: { directory: sessionDir },
                   body: {
                     title,
                     metadata: spawnMeta,
@@ -2135,7 +2230,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             } else {
               await engineClient.session.promptAsync({
                 path: { id },
-                query: { directory: ctx.directory },
+                query: { directory: sessionDir },
                 body: {
                   parts: [{ type: "text", text: args.prompt }],
                   ...(model ? { model } : {}),
@@ -2147,15 +2242,118 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
+          // Compensating delete: if we created a worktree but session
+          // creation failed, clean up the worktree (best-effort, #1060 AC5).
+          if (createdWorktreeDir && engineClient.worktree) {
+            try { await engineClient.worktree.remove({ query: { directory: createdWorktreeDir } }); } catch { /* best-effort */ }
+          }
           if (children.length > 0) return `${summarizeSpawned(children, args.mode)}\nStopped early: ${msg}`;
-          return `Cannot spawn: ${msg}`;
+          return JSON.stringify({ error: `Session creation failed: ${msg}`, reason: "session_failed" });
         }
         // The routing note rides the dispatch summary (observability clause:
         // ambient when ignored, inspectable on click) — never in the
         // zero-config case, where the summary stays byte-identical.
         const summary = summarizeSpawned(children, args.mode);
-        return routed.resolution ? `${summary}\n${routingSummaryLine(routed.resolution)}` : summary;
+        const parts = [summary];
+        if (worktreeWarning) parts.push(worktreeWarning);
+        if (routed.resolution) parts.push(routingSummaryLine(routed.resolution));
+        return parts.join("\n");
         });
+      },
+    },
+
+    amicode_workspace: {
+      description:
+        "List, remove, or reset git worktrees used for agent workspace isolation. " +
+        "Three actions: `list` shows all active worktrees with their branches; " +
+        "`remove` deletes a worktree by directory; `reset` resets a worktree to " +
+        "the default branch. Requires the experimental worktrees feature to be enabled.",
+      args: {
+        action: {
+          type: "string",
+          description: "list | remove | reset",
+        },
+        directory: {
+          type: ["string", "null"],
+          description: "The worktree directory (required for remove/reset, ignored for list).",
+        },
+      },
+      async execute(
+        a: { action: string; directory?: string | null },
+        ctx: AmicodeToolContext,
+      ) {
+        const engineClient = ctx.engineClient;
+        if (!engineClient) {
+          return (
+            ctx.carrier === "plugin"
+              ? "Cannot manage workspaces: the engine did not hand this plugin a server client (legacy load path)."
+              : "Cannot manage workspaces: the MCP transport carries no engine client — workspace management rides " +
+                "the harness's own worktree API (this tool only works inside the opencode plugin transport)."
+          );
+        }
+        if (!engineClient.worktree) {
+          return "Workspace management requires the experimental worktrees feature to be enabled.";
+        }
+        const wt = engineClient.worktree;
+
+        if (a.action === "list") {
+          try {
+            const raw = unwrap<Array<{ directory?: string; branch?: string }>>(await wt.list());
+            const items = Array.isArray(raw) ? raw : [];
+            if (items.length === 0) return "No active worktrees.";
+            const lines = items.map((w) => {
+              const branch = w.branch ? ` (branch: ${w.branch})` : "";
+              return `- ${w.directory ?? "(unknown)"}${branch}`;
+            });
+            return `${items.length} active worktree${items.length === 1 ? "" : "s"}:\n${lines.join("\n")}`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to list worktrees: ${msg}`;
+          }
+        }
+
+        if (a.action === "remove") {
+          if (!a.directory || a.directory.trim() === "") {
+            return "Cannot remove: directory parameter is required.";
+          }
+          try {
+            await wt.remove({ directory: a.directory });
+            return `Removed worktree at ${a.directory}.`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/not found/i.test(msg)) {
+              return `No worktree found at ${a.directory}.`;
+            }
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to remove worktree: ${msg}`;
+          }
+        }
+
+        if (a.action === "reset") {
+          if (!a.directory || a.directory.trim() === "") {
+            return "Cannot reset: directory parameter is required.";
+          }
+          try {
+            await wt.reset({ directory: a.directory });
+            return `Reset worktree at ${a.directory} to default branch.`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/not found/i.test(msg)) {
+              return `No worktree found at ${a.directory}.`;
+            }
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to reset worktree: ${msg}`;
+          }
+        }
+
+        return `Unknown action "${a.action}". Valid actions: list, remove, reset.`;
       },
     },
 
@@ -2202,232 +2400,6 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         } catch (err) {
           return `Cannot set veloce: ${err instanceof Error ? err.message : String(err)}`;
         }
-      },
-    },
-
-    // ── Slack MCP tools (#1040) — bridge the Connections-panel credential to
-    // agent-usable Slack operations. Each tool gates on slackPreCheck (the
-    // credential-existence check) and uses the shared slack_api.ts HTTP layer.
-    // NOT quantum-control-specific, NOT problem-stage tools: UNGATED.
-    amicode_slack_list: {
-      description:
-        "List Slack channels or workspace members visible to the connected bot. " +
-        'kind="channels" returns public and private channels; kind="users" returns active ' +
-        "(non-deleted, non-bot) members. Pass query to filter by name (case-insensitive " +
-        "substring match). Returns at most one page (200 items); if more exist, the response " +
-        "notes truncation.",
-      args: {
-        kind: {
-          type: "string",
-          description: '"channels" or "users".',
-        },
-        query: {
-          type: ["string", "null"],
-          description: "Optional name/handle filter (case-insensitive substring). Null for all.",
-        },
-      },
-      async execute(a: { kind: string; query?: string | null }) {
-        const pre = slackPreCheck(() => readCredential("slack"));
-        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
-
-        if (a.kind === "channels") {
-          const result = await slackFetch(pre.token, "conversations.list", {
-            types: "public_channel,private_channel",
-            limit: "200",
-          });
-          if (!result.ok) return JSON.stringify(result);
-
-          const raw = ((result as Record<string, unknown>).channels as Array<{
-            id: string; name: string; topic?: { value?: string }; num_members?: number;
-          }>) ?? [];
-          let channels = raw;
-          if (a.query) {
-            const q = a.query.toLowerCase();
-            channels = channels.filter((c) => c.name?.toLowerCase().includes(q));
-          }
-          const lines = channels.map(
-            (c) => `#${c.name} — ${c.topic?.value || "(no topic)"} (${c.num_members ?? "?"} members)`,
-          );
-          let text = lines.join("\n") || "(no channels found)";
-          const cursor = (result as Record<string, unknown>).response_metadata as { next_cursor?: string } | undefined;
-          if (cursor?.next_cursor) text += `\n\n(truncated — showing first page of ${raw.length} results)`;
-          return text;
-        }
-
-        if (a.kind === "users") {
-          const result = await slackFetch(pre.token, "users.list", { limit: "200" });
-          if (!result.ok) return JSON.stringify(result);
-
-          const raw = ((result as Record<string, unknown>).members as Array<{
-            id: string; name: string; real_name?: string; deleted?: boolean; is_bot?: boolean;
-            profile?: { display_name?: string; status_text?: string };
-          }>) ?? [];
-          let members = raw.filter((m) => !m.deleted && !m.is_bot);
-          if (a.query) {
-            const q = a.query.toLowerCase();
-            members = members.filter(
-              (m) =>
-                m.name?.toLowerCase().includes(q) ||
-                m.real_name?.toLowerCase().includes(q) ||
-                m.profile?.display_name?.toLowerCase().includes(q),
-            );
-          }
-          const lines = members.map((m) => {
-            const display = m.profile?.display_name || m.real_name || m.name;
-            const status = m.profile?.status_text || "";
-            return `@${m.name} (${display})${status ? ` — ${status}` : ""}`;
-          });
-          let text = lines.join("\n") || "(no users found)";
-          const cursor = (result as Record<string, unknown>).response_metadata as { next_cursor?: string } | undefined;
-          if (cursor?.next_cursor) text += `\n\n(truncated — showing first page of ${raw.length} results)`;
-          return text;
-        }
-
-        return JSON.stringify({ ok: false, reason: "invalid_kind", hint: 'kind must be "channels" or "users"' });
-      },
-    },
-
-    amicode_slack_read: {
-      description:
-        "Read messages from a Slack channel, DM, or thread. target accepts #channel, @user, " +
-        'a raw channel ID, or "dms" (default) for a DM overview. Pass thread_ts to read a ' +
-        "specific thread's replies. limit defaults to 20, max 100. Returns formatted message " +
-        "history.",
-      args: {
-        target: {
-          type: ["string", "null"],
-          description: '#channel, @user, raw channel ID, or "dms" (default). Null defaults to "dms".',
-        },
-        limit: {
-          type: ["number", "null"],
-          description: "Max messages to retrieve (default 20, max 100). Null for default.",
-        },
-        thread_ts: {
-          type: ["string", "null"],
-          description: "Thread timestamp — read replies to this message. Null for channel-level messages.",
-        },
-      },
-      async execute(a: { target?: string | null; limit?: number | null; thread_ts?: string | null }) {
-        const pre = slackPreCheck(() => readCredential("slack"));
-        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
-
-        const target = a.target?.trim() || "dms";
-        const limit = Math.min(Math.max(typeof a.limit === "number" ? a.limit : 20, 1), 100);
-        const userCache = new UserCache(pre.token);
-        const channelCache = new ChannelCache(pre.token);
-        const caches = { users: userCache, channels: channelCache };
-
-        // "dms" → list DM overview
-        if (target.toLowerCase() === "dms") {
-          const resolved = await resolveTarget(pre.token, "dms", caches);
-          if (!resolved.ok) return JSON.stringify(resolved);
-          const dms = ((resolved as Record<string, unknown>).channels as Array<{
-            id: string; name: string; user?: string;
-          }>) ?? [];
-          const lines: string[] = [];
-          for (const dm of dms) {
-            const userName = dm.user ? await userCache.resolve(dm.user) : dm.name;
-            lines.push(`DM with ${userName} (${dm.id})`);
-          }
-          return lines.join("\n") || "(no DMs found)";
-        }
-
-        // Resolve the target channel
-        const resolved = await resolveTarget(pre.token, target, caches);
-        if (!resolved.ok) return JSON.stringify(resolved);
-        const channelId = (resolved as Record<string, unknown>).channel_id as string;
-
-        // Thread replies
-        if (a.thread_ts) {
-          const result = await slackFetch(pre.token, "conversations.replies", {
-            channel: channelId,
-            ts: a.thread_ts,
-            limit: String(limit),
-          });
-          if (!result.ok) return JSON.stringify(result);
-          const messages = ((result as Record<string, unknown>).messages as Array<Record<string, unknown>>) ?? [];
-          return await formatMessages(messages, userCache);
-        }
-
-        // Channel history
-        const result = await slackFetch(pre.token, "conversations.history", {
-          channel: channelId,
-          limit: String(limit),
-        });
-        if (!result.ok) return JSON.stringify(result);
-        const messages = ((result as Record<string, unknown>).messages as Array<Record<string, unknown>>) ?? [];
-        return await formatMessages(messages, userCache);
-      },
-    },
-
-    amicode_slack_send: {
-      description:
-        "Send a message to a Slack channel or user. target accepts #channel or @user. " +
-        "text is the message body in Slack mrkdwn; @handle mentions in text are resolved " +
-        "to Slack user IDs automatically. Pass thread_ts to reply in a thread. Returns " +
-        "{ ok: true, ts } on success or a structured error.",
-      args: {
-        target: {
-          type: "string",
-          description: "#channel or @user — where to send.",
-        },
-        text: {
-          type: "string",
-          description: "Message body in Slack mrkdwn. @handle mentions are auto-resolved.",
-        },
-        thread_ts: {
-          type: ["string", "null"],
-          description: "Reply in this thread (message timestamp). Null for a top-level message.",
-        },
-      },
-      async execute(a: { target: string; text: string; thread_ts?: string | null }) {
-        const pre = slackPreCheck(() => readCredential("slack"));
-        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
-
-        if (!a.target || a.target.trim() === "") {
-          return JSON.stringify({ ok: false, reason: "missing_target", hint: "target is required (#channel or @user)" });
-        }
-        if (!a.text || a.text.trim() === "") {
-          return JSON.stringify({ ok: false, reason: "missing_text", hint: "text is required" });
-        }
-
-        const userCache = new UserCache(pre.token);
-        const channelCache = new ChannelCache(pre.token);
-        const caches = { users: userCache, channels: channelCache };
-
-        // Resolve @handle patterns in message text
-        const resolvedText = await resolveHandles(a.text, userCache, globalThis.fetch);
-
-        // Resolve the target channel/DM
-        const resolved = await resolveTarget(pre.token, a.target, caches);
-        if (!resolved.ok) return JSON.stringify(resolved);
-        const channelId = (resolved as Record<string, unknown>).channel_id as string;
-        if (!channelId) {
-          return JSON.stringify({
-            ok: false,
-            reason: "invalid_target",
-            hint: "target must resolve to a channel or DM, not a list",
-          });
-        }
-
-        // Post the message
-        const params: Record<string, string> = { channel: channelId, text: resolvedText };
-        if (a.thread_ts) params.thread_ts = a.thread_ts;
-        const result = await slackFetch(pre.token, "chat.postMessage", params);
-
-        if (!result.ok) {
-          // Override hint for not_in_channel
-          if ((result as Record<string, unknown>).reason === "not_in_channel") {
-            return JSON.stringify({
-              ok: false,
-              reason: "not_in_channel",
-              hint: `Invite the bot to ${a.target} first`,
-            });
-          }
-          return JSON.stringify(result);
-        }
-
-        return JSON.stringify({ ok: true, ts: (result as Record<string, unknown>).ts ?? null });
       },
     },
 

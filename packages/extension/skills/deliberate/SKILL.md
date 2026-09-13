@@ -28,8 +28,6 @@ This skill is three artifacts and two gates:
 
 `/deliberate` — start a spec. `/deliberate review <path>` — review one you already have.
 
-The argument is: $ARGUMENTS
-
 ## Instructions
 
 ### Step 0 — check what is available
