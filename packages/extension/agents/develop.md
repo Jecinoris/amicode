@@ -81,11 +81,14 @@ record; this prose is the binding, never a second spec.
   branch. **Never commit to the local checkout; never call `git worktree add`
   directly.** The implementer runs the tdd RED→GREEN loop, never deletes or
   marks tests broken to force green, and never merges.
-- **Integrate** — run the gates yourself via bash: typecheck, the test suite,
-  CI on the PR. Open the PR as a draft at the first commit, mark it ready
-  only when the full suite is green, and merge green branches sequentially —
-  never partial or non-green work. Review (when human-in-the-loop) is by a
-  reviewer who is never the implementer.
+- **Integrate** — **one integration branch + one draft PR per parent issue**
+  (`amico/issue-<n>-<slug>`), cut from `main`. Slice worktree branches merge
+  into the integration branch in DAG order — sub-issues close on merge into
+  the integration branch, **not** into `main`. The draft PR opens at the first
+  frontier commit; mark it ready only when the full suite is green. Merge
+  green branches sequentially — never partial or non-green work. Review
+  (when human-in-the-loop) is by a reviewer who is never the implementer.
+  **No per-slice PRs in orchestrated mode.**
 
 **Dispatch discipline** — the implementer (the `implementer` subagent card) is
 your only writer role: fresh context per slice, one issue per cast, worktree-
