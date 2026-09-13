@@ -5,10 +5,10 @@
   "gate": "CZ",
   "platform": "rydberg",
   "session_id": "s2",
-  "status": "solved",
+  "status": "completed",
   "tags": [
     "cz"
   ],
-  "task_type": "experiment-sim",
+  "task_type": "experiment",
   "type": "experiment"
 }

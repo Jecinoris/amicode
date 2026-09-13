@@ -28,8 +28,10 @@
   ],
   "properties": {
     "applicability": {
-      "minLength": 1,
-      "type": "string"
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "confidence": {
       "enum": [
@@ -63,9 +65,12 @@
       "minLength": 1,
       "type": "string"
     },
-    "source": {
+    "session_id": {
       "minLength": 1,
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -85,7 +90,7 @@
     "type",
     "name",
     "date",
-    "source",
+    "session_id",
     "applicability",
     "tags"
   ],

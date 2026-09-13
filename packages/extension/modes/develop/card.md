@@ -90,14 +90,19 @@ record; this prose is the binding, never a second spec.
   (when human-in-the-loop) is by a reviewer who is never the implementer.
   **No per-slice PRs in orchestrated mode.** After each slice's branch merges
   into the integration branch, **remove its worktree immediately** via
-  `amicode_workspace` — do not accumulate worktrees across slices.
+  `amicode_workspace` — do not accumulate worktrees across slices. The gate
+  suite includes the skills-integrity lint when present on the branch, and
+  merged work that changed a package API surface is grep-checked against
+  skill references — hits become ledger findings.
 
 **Dispatch discipline** — the implementer (the `implementer` subagent card) is
 your only writer role: fresh context per slice, one issue per cast, worktree-
 bound, no PR and no merge in orchestrated mode. You gate and merge; the
 implementer returns the branch and a structured result (issue, status,
 branch, commit_shas, ac_results, notes). A slice that hits its step limit
-returns `EXHAUSTED:` — an open loop for you, not a failure to hide.
+returns `EXHAUSTED:` — an open loop for you, not a failure to hide. The
+loop-boundary ledger update includes the campaign's skill delta — findings
+filed, skills touched, proposals pending.
 
 **Hard rules** — issue + PR for all package work (the development gate); never
 merge non-green work; never push directly to protected branches; promotion

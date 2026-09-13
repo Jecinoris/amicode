@@ -44,7 +44,10 @@ describe("card schemas", () => {
   });
 
   it("a legacy card with no extension fields still validates (backward compat)", () => {
-    const legacy = { type: "insight", date: "2026-01-01", source: "s", evidence: [], confidence: "medium", tags: [] };
+    // amico-vault alignment (F26, PR #1052): `source` is now a tolerated
+    // legacy extra (not required), session_id is present-either-way (null on
+    // a human-curated card).
+    const legacy = { type: "insight", date: "2026-01-01", session_id: null, source: "s", evidence: [], confidence: "medium", tags: [] };
     const res = validateCard(legacy, schemas);
     expect(res.errors, JSON.stringify(res.errors)).toEqual([]);
     expect(res.ok).toBe(true);
@@ -54,6 +57,7 @@ describe("card schemas", () => {
     const full = {
       type: "insight",
       date: "2026-08-22",
+      session_id: null,
       source: "session",
       evidence: ["experiments/x.md"],
       confidence: "high",
@@ -106,7 +110,7 @@ describe("invalid fixture corpus (refusals with named schema paths)", () => {
     "tombstone-dangling-pointer.json": "$.pointer",
     "tombstone-superseded-no-pointer.json": "$.pointer",
     "tombstone-expired-ttl-no-date.json": "$.original_review_by",
-    "missing-required.json": "$.source",
+    "missing-required.json": "$.session_id",
     "untyped.json": "$.type",
     "unknown-type.json": "$.type",
     "record-missing-origin.json": "$.origin",
@@ -165,6 +169,7 @@ describe("sentinel semantics", () => {
     const bad = {
       type: "insight",
       date: "2026-08-22",
+      session_id: null,
       source: "s",
       evidence: [],
       confidence: "medium",
@@ -180,6 +185,7 @@ describe("sentinel semantics", () => {
     const bad = {
       type: "insight",
       date: "2026-08-22",
+      session_id: null,
       source: "s",
       evidence: [],
       confidence: "medium",
@@ -193,6 +199,7 @@ describe("sentinel semantics", () => {
     const good = {
       type: "insight",
       date: "2026-08-22",
+      session_id: null,
       source: "s",
       evidence: [],
       confidence: "low",
@@ -209,13 +216,13 @@ describe("reviewer adversarial semantics (2026-08-23 pass, #517)", () => {
   it("accepts fidelity at the [0, 1] boundaries", () => {
     const base = {
       type: "experiment",
-      task_type: "experiment-sim",
+      task_type: "experiment",
       date: "2026-08-22",
       session_id: "s",
       platform: "transmon",
       gate: "X",
       duration_us: 10,
-      status: "solved",
+      status: "completed",
       tags: [],
     };
     for (const fidelity of [0, 1]) {
@@ -225,7 +232,7 @@ describe("reviewer adversarial semantics (2026-08-23 pass, #517)", () => {
   });
 
   it("accepts a real leap day but refuses a non-leap Feb 29", () => {
-    const base = { type: "insight", date: "2026-08-22", source: "s", evidence: [], confidence: "medium", tags: [] };
+    const base = { type: "insight", date: "2026-08-22", session_id: null, source: "s", evidence: [], confidence: "medium", tags: [] };
     expect(validateCard({ ...base, review_by: "2024-02-29" }, schemas).ok).toBe(true);
     expect(validateCard({ ...base, review_by: "2027-02-29" }, schemas).ok).toBe(false);
   });

@@ -34,6 +34,10 @@
         "high"
       ]
     },
+    "domain": {
+      "minLength": 1,
+      "type": "string"
+    },
     "name": {
       "minLength": 1,
       "type": "string"
@@ -46,6 +50,13 @@
     },
     "provenance_unrecoverable": {
       "type": "boolean"
+    },
+    "relationship": {
+      "enum": [
+        "partner",
+        "customer",
+        "academic"
+      ]
     },
     "review_by": {
       "format": "date",
@@ -72,6 +83,8 @@
   "required": [
     "type",
     "name",
+    "domain",
+    "relationship",
     "tags"
   ],
   "title": "org card",

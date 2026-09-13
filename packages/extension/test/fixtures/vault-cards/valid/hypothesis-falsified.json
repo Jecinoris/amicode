@@ -3,8 +3,9 @@
   "evidence": [
     "experiments/e6.md"
   ],
+  "session_id": null,
   "source": "session",
-  "status": "falsified",
+  "status": "refuted",
   "tags": [
     "magnus"
   ],

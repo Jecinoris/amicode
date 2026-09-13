@@ -3,8 +3,9 @@
   "evidence": [
     "experiments/e5.md"
   ],
+  "session_id": null,
   "source": "session",
-  "status": "tested",
+  "status": "confirmed",
   "tags": [
     "bilinear"
   ],

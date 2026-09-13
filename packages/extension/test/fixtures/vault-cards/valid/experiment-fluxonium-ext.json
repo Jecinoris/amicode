@@ -9,11 +9,11 @@
   ],
   "review_by": "2026-11-16",
   "session_id": "s4",
-  "status": "solved",
+  "status": "completed",
   "subject": "fluxonium-x",
   "tags": [
     "fluxonium"
   ],
-  "task_type": "experiment-sim",
+  "task_type": "experiment",
   "type": "experiment"
 }

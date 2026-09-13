@@ -104,7 +104,7 @@ running `amico env promote` on any staged proposals in `ledger/environment-propo
 
 ## The campaign ledger (create at kickoff, before any work)
 
-Path: `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md`. Nine sections, in order:
+Path: `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md` — this project-local ledger serves Research-Project-scoped work and reconciles to the **session ledger** in the personal vault (`sessions/session-<YYYYMMDD>-<slug>.md`, per `director-core`'s discovery rule) at each loop boundary. Nine sections, in order:
 
 1. Objective & standing directives
 2. Hypothesis ledger (H# → verdict → evidence → wiki-links)

@@ -1,4 +1,6 @@
 {
+  "device_class": "classical",
+  "location": "desk",
   "name": "Mac mini",
   "platforms": [
     "server"

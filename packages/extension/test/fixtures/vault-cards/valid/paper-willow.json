@@ -4,9 +4,15 @@
     "Willow",
     "Andersen"
   ],
-  "date": "2026-08-05",
+  "date_read": "2026-08-05",
+  "relevance": "high",
+  "session_id": null,
+  "systems": [
+    "spin"
+  ],
   "tags": [
     "spin-qubits"
   ],
+  "title": "2405.17385 study",
   "type": "paper"
 }

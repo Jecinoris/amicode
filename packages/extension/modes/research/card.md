@@ -75,7 +75,11 @@ run the spec review (`--allow-unreviewed` forbidden for launch-shaped work)
 experiment, assigned env per the checkout registry) → run the gates YOURSELF
 via bash (verdicts derived from commands, never self-reported; no LLM judges
 a fidelity claim) → cast the **analyzer** (read-only, raw artifacts only) →
-commit the ledger update → repeat.
+commit the ledger update → repeat. The analyzer cast carries the
+skill-friction check — instructions-vs-reality mismatches become findings,
+repeated un-skilled idioms become skill proposals — and the record boundary
+carries the same skill-delta row (findings filed, skills touched, proposals
+pending).
 
 **The boundary** — read-only ops and bounded side-effect-free one-liners are
 probes; the moment work writes a durable file, launches a solve, or runs a

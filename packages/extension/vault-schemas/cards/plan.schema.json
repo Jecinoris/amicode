@@ -55,9 +55,26 @@
       "minLength": 1,
       "type": "string"
     },
-    "status": {
+    "session_id": {
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "spec": {
       "minLength": 1,
       "type": "string"
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "approved",
+        "executing",
+        "completed",
+        "abandoned",
+        "failed"
+      ]
     },
     "subject": {
       "minLength": 1,
@@ -71,13 +88,23 @@
     },
     "type": {
       "const": "plan"
+    },
+    "visibility": {
+      "enum": [
+        "local",
+        "team",
+        "public"
+      ]
     }
   },
   "required": [
     "type",
     "date",
+    "session_id",
     "status",
-    "tags"
+    "spec",
+    "tags",
+    "visibility"
   ],
   "title": "plan card",
   "type": "object"

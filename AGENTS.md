@@ -27,7 +27,7 @@ Interview flows are data (`packages/extension/scores/`). Schemas: `packages/sche
 ## Setup (in order; each step has a check)
 
 ```bash
-git clone git@github.com:harmoniqs/amicissimode.git && cd amicode
+git clone git@github.com:harmoniqs/amicode.git && cd amicode
 corepack enable && pnpm install               # check: exits 0, lockfile untouched
 pnpm -r build                                 # check: packages/extension/dist/extension.js exists
 pnpm --filter amicode run fetch:opencode   # check: vendor/opencode/<platform>/opencode exists

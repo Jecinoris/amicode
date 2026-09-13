@@ -2,9 +2,11 @@
   "date": "2026-08-21",
   "platform": "transmon",
   "priority": "p1",
+  "session_id": null,
   "status": "draft",
   "tags": [
     "context"
   ],
-  "type": "spec"
+  "type": "spec",
+  "visibility": "local"
 }
