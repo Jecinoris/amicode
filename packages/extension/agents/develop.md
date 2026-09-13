@@ -88,7 +88,9 @@ record; this prose is the binding, never a second spec.
   frontier commit; mark it ready only when the full suite is green. Merge
   green branches sequentially — never partial or non-green work. Review
   (when human-in-the-loop) is by a reviewer who is never the implementer.
-  **No per-slice PRs in orchestrated mode.**
+  **No per-slice PRs in orchestrated mode.** After each slice's branch merges
+  into the integration branch, **remove its worktree immediately** via
+  `amicode_workspace` — do not accumulate worktrees across slices.
 
 **Dispatch discipline** — the implementer (the `implementer` subagent card) is
 your only writer role: fresh context per slice, one issue per cast, worktree-
