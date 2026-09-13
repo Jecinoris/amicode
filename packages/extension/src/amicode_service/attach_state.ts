@@ -561,10 +561,20 @@ export interface ModeTransitionEngineOptions {
   clock?: TransitionClock;
   hooks?: KillHookSurface;
   /** P4a-3's serialization SEAM (D2): fires BEFORE the attach test, once
-   *  per verify attempt — the future proposal queue drains here. A throwing
+   *  per verify attempt — the proposal queue (#1092) drains here. A throwing
    *  drain leaves the transition STAGED (nothing written, nothing
    *  journaled for the attempt). */
   onVerifyEntry?: (ctx: VerifyContext) => Promise<void> | void;
+  /** #1092 (P4a-3) — the serialization HOLD hook (D2): the verify→commit
+   *  window. Fired "open" once the window opens (immediately after the
+   *  verify-entry drain, BEFORE the attach test) and "closed" when the
+   *  window resolves (a verify outcome that is not a pass, or the commit /
+   *  rollback / pending-resolve that ends a pass). While the window is open
+   *  the queue holds its applies — the two machines never interleave. A
+   *  recovered journaled commit-pending re-asserts "open" on construction.
+   *  THE sanctioned additive engine change of #1092 — absent = no behavior
+   *  change, nothing else in the engine moves. */
+  onCommitWindow?: (phase: "open" | "closed", reason: string) => void;
 }
 
 const IN_FLIGHT_STATES: ReadonlySet<ModeTransitionEngineState> = new Set([
@@ -579,6 +589,10 @@ export class ModeTransitionEngine {
   private readonly clockValue: TransitionClock;
   private readonly hooks: KillHookSurface | null;
   private readonly onVerifyEntry: ((ctx: VerifyContext) => Promise<void> | void) | null;
+  private readonly onCommitWindowValue: ((phase: "open" | "closed", reason: string) => void) | null;
+  /** #1092: the verify→commit window latch — fires the hook only on true
+   *  transitions (a guarded close from a closed window is a no-op). */
+  private windowOpenValue = false;
   private readonly configValue: ModeTransitionConfig;
   private stateValue: ModeTransitionEngineState = "idle";
   private haltedAtValue: "pre-commit" | "mid-commit" | null = null;
@@ -592,6 +606,7 @@ export class ModeTransitionEngine {
     this.clockValue = opts.clock ?? new WallClock();
     this.hooks = opts.hooks ?? null;
     this.onVerifyEntry = opts.onVerifyEntry ?? null;
+    this.onCommitWindowValue = opts.onCommitWindow ?? null;
     const merged: ModeTransitionConfig = {
       ...DEFAULT_MODE_TRANSITION_CONFIG,
       ...(opts.config ?? {}),
@@ -718,6 +733,9 @@ export class ModeTransitionEngine {
       // the P4a-3 serialization SEAM (D2): the drain fires BEFORE the
       // attach test, once per verify attempt
       if (this.onVerifyEntry !== null) await this.onVerifyEntry(ctx);
+      // #1092: the verify→commit window opens AFTER the drain and BEFORE
+      // the attach test — the queue holds its applies through commit
+      this.fireWindow("open", `verify entered: transition ${proposal.id} (${proposal.from} → ${proposal.to})`);
       const winner = await Promise.race([
         Promise.resolve(this.verifyImpl(ctx)).then(
           (outcome): { tag: "outcome"; outcome: VerifyOutcome } => ({ tag: "outcome", outcome }),
@@ -732,18 +750,24 @@ export class ModeTransitionEngine {
         };
         this.journalVerify(outcome);
         this.stateValue = "staged"; // return to staged — the snapshot retained
+        // #1092: the window closes — no commit is coming from this attempt
+        this.fireWindow("closed", "verify settled: budget expired (transient — staged, no commit in flight)");
         return outcome;
       }
       const outcome = winner.outcome;
       this.journalVerify(outcome);
       if (outcome.kind === "pass") {
         this.stateValue = "verified";
+        // #1092: the window STAYS OPEN through commit — the queue holds
+        // applies until the commit resolves (closed in completeCommit)
         return outcome;
       }
       if (outcome.kind === "transient-fail") {
         // return to staged with the snapshot retained; re-verify needs NO
         // fresh confirm — the human confirmed the proposal, not the timing
         this.stateValue = "staged";
+        // #1092: the window closes — no commit is coming from this attempt
+        this.fireWindow("closed", "verify settled: transient-fail (staged, no commit in flight)");
         return outcome;
       }
       // STRUCTURAL: a world change — automatic rollback to the pre-stage
@@ -755,6 +779,16 @@ export class ModeTransitionEngine {
     } finally {
       this.clockValue.clearTimeout(timer);
     }
+  }
+
+  /** #1092 (P4a-3) — fire the serialization HOLD hook on a true window
+   *  transition only (an open from open, or a closed from closed, is a
+   *  no-op — the latch, not the call site, owns the edge detection). */
+  private fireWindow(phase: "open" | "closed", reason: string): void {
+    if (phase === "open" && this.windowOpenValue) return;
+    if (phase === "closed" && !this.windowOpenValue) return;
+    this.windowOpenValue = phase === "open";
+    this.onCommitWindowValue?.(phase, reason);
   }
 
   private journalVerify(outcome: VerifyOutcome): void {
@@ -911,6 +945,9 @@ export class ModeTransitionEngine {
     this.stateValue = "committed";
     this.haltedAtValue = null;
     this.pendingSinceMs = null;
+    // #1092: the commit resolved — the window closes, the queue's held
+    // applies may run (the release drain re-verifies them first)
+    this.fireWindow("closed", `commit resolved: committed ${proposal.to} (${proposal.id})`);
   }
 
   private applyRollback(reason: string): { rolledBack: boolean; restoredFields: string[] } {
@@ -926,6 +963,10 @@ export class ModeTransitionEngine {
     this.stateValue = "rolled-back";
     this.haltedAtValue = null;
     this.pendingSinceMs = null;
+    // #1092: the rollback resolved the transition — the window closes
+    // (covers the structural verify-fail, the explicit verified rollback,
+    // and the pending-resolve abort; a close from closed is a guarded no-op)
+    this.fireWindow("closed", `rollback resolved: ${reason}`);
     return { rolledBack: true, restoredFields: restored };
   }
 
@@ -951,6 +992,11 @@ export class ModeTransitionEngine {
     this.snapshotValue = open.snapshot;
     this.proposalValue = open.proposal;
     this.pendingSinceMs = open.sinceMs;
+    // #1092: a recovered commit-pending is mid-window by definition — the
+    // fresh engine re-asserts the open window so a fresh queue holds its
+    // applies until the pending transition resolves (locally — never a hub
+    // round-trip)
+    this.fireWindow("open", `recovered commit-pending from the mode journal (transition ${open.proposal.id})`);
   }
 
   private nowIso(): string {
