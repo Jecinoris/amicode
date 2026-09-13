@@ -200,7 +200,8 @@ The procedure, both directions:
   evidence pointers, suggested repo + tier — name the target posture
   (develop), and hand it over; the receiving mode's protocol (the `develop`
   skill) renders it through `write-an-issue` and runs the dev walk on it.
-- **Switching modes mid-session: PENDING-D5.** Until the fork's posture
+- **Switching modes mid-session is not yet specified; the mode cards'
+  posture-honesty sections govern until it is.** Until the fork's posture
   surfaces ship, the safe path is to spawn or open the target posture's
   session on the seed rather than switching in place; the ledger discovery
   rule holds either way. Seed-write failures are reported in-chat — never
