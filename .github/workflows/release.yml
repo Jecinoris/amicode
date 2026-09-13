@@ -16,8 +16,37 @@ permissions:
   contents: write
 
 jobs:
+  # ── Build binaries from the overlay tree (replaces fork-download) ──────────
+  build-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Build native binary (linux-x64)
+        run: node packages/extension/scripts/build_binary.mjs
+      - name: Cross-compile remaining platforms
+        run: |
+          for P in linux-arm64 darwin-arm64; do
+            node packages/extension/scripts/build_binary.mjs --platform "$P"
+          done
+      - name: Upload vendor/opencode (all platforms)
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-binaries
+          path: packages/extension/vendor/opencode/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     runs-on: ubuntu-latest
+    needs: [build-binary]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -40,22 +69,30 @@ jobs:
           [ "${{ steps.meta.outputs.base }}" = "$MANIFEST" ] \
             || { echo "::error::tag base and extension manifest version differ."; exit 1; }
       - run: pnpm install --frozen-lockfile
-      - name: Verify the immutable release pin
+      - name: Download built binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: opencode-binaries
+          path: packages/extension/vendor/opencode
+      - name: Restore binary permissions
+        run: chmod +x packages/extension/vendor/opencode/*/opencode
+      - name: Verify the release pin
         run: |
           node - <<'NODE'
           const lock = require('./packages/extension/opencode.lock.json')
-          if (!lock.repo || !lock.tag || !lock.ref) throw new Error('release tag must pin a fork repo, tag, and commit')
+          if (!lock.version) throw new Error('release pin must have a version')
+          const fs = require('fs')
+          const bi = fs.readFileSync('packages/extension/vendor/opencode/linux-x64/.buildinfo', 'utf8')
+          const m = bi.match(/^OPENCODE_VERSION=(.+)$/m)
+          if (!m || m[1] !== lock.version) throw new Error(`buildinfo version ${m?.[1]} != lock version ${lock.version}`)
+          console.log(`Pin verified: lock.version=${lock.version} matches built binary`)
           NODE
-      - run: pnpm --filter amicode run package
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
-      - name: Vendor every binary from the committed release pin
+      - name: Build extension (build + exemplars + app)
         run: |
-          for P in darwin-arm64 linux-arm64; do
-            node packages/extension/scripts/fetch_opencode.mjs --platform "$P" --release
-          done
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
+          pnpm --filter @amicode/amico-run build
+          pnpm --filter amicode run build
+          pnpm --filter amicode run build:exemplars
+          pnpm --filter amicode run build:app
       - name: Gate check every vendored binary
         run: |
           for P in linux-x64 linux-arm64 darwin-arm64; do

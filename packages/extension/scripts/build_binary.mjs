@@ -65,7 +65,11 @@ const run = (cmd, cmdArgs, cwd, note) => {
 };
 
 // ── platform key (matches fetch_opencode.mjs / opencode.lock.json keys) ─────
-const platformKey = `${process.platform}-${process.arch}`;
+// --platform <key> enables cross-compilation (e.g. --platform linux-arm64 on
+// a linux-x64 host).  Without it, the host platform is used + --single flag.
+const requestedPlatform = flag("platform");
+const platformKey = requestedPlatform ?? `${process.platform}-${process.arch}`;
+const isCross = requestedPlatform && requestedPlatform !== `${process.platform}-${process.arch}`;
 
 // ── load the lock for OPENCODE_VERSION ──────────────────────────────────────
 const lockPath = join(EXT_ROOT, "opencode.lock.json");
@@ -136,14 +140,22 @@ if (!existsSync(opencodePkg))
 // ── bun install in the materialized tree ────────────────────────────────────
 const bun = resolveBun();
 console.log(`[build:binary] bun: ${bun}`);
-run(bun, ["install"], work, "bun install (materialized tree deps)");
+// --ignore-scripts avoids tree-sitter node-gyp rebuilds on CI runners whose
+// Node version may lack undici internals that node-gyp's download.js pulls in.
+// bun resolves the pre-built tree-sitter binaries without needing node-gyp.
+run(bun, ["install", "--ignore-scripts"], work, "bun install (materialized tree deps)");
 
 // ── build the binary ────────────────────────────────────────────────────────
 // The fork's build recipe: Script reads OPENCODE_VERSION and OPENCODE_CHANNEL
 // from env.  OPENCODE_RELEASE must NOT be set (it triggers release upload).
-// --single:          build only the current platform
+// --single:          build only the current platform (used for native builds)
 // --skip-install:    deps already installed above
 // --skip-embed-web-ui: the shelf serves the app separately
+//
+// Cross-compilation: when --platform specifies a non-native target,
+// OPENCODE_BUILD_TARGETS selects the specific target in build.ts (S3 proven).
+// The --single flag is dropped because cross-compilation needs build.ts to
+// consider all targets, then OPENCODE_BUILD_TARGETS filters to the one we want.
 const buildEnv = {
   ...process.env,
   OPENCODE_VERSION: version,
@@ -153,10 +165,24 @@ const buildEnv = {
 // Defensive: ensure OPENCODE_RELEASE is NOT set
 delete buildEnv.OPENCODE_RELEASE;
 
-console.log(`[build:binary] building with OPENCODE_CHANNEL=dev OPENCODE_VERSION=${version}`);
+// For cross-compilation, set OPENCODE_BUILD_TARGETS to the specific platform
+if (isCross) {
+  buildEnv.OPENCODE_BUILD_TARGETS = `opencode-${platformKey}`;
+}
+
+const buildArgs = ["run", "script/build.ts"];
+if (!isCross) buildArgs.push("--single");
+// When cross-compiling, do NOT pass --skip-install: build.ts installs
+// cross-platform optional deps (@opentui/core, @parcel/watcher, @ff-labs/fff-bun)
+// with --os="*" --cpu="*" which is required for the target platform's native bindings.
+// For native builds, --skip-install is safe since we already ran bun install above.
+if (!isCross) buildArgs.push("--skip-install");
+buildArgs.push("--skip-embed-web-ui");
+
+console.log(`[build:binary] building with OPENCODE_CHANNEL=dev OPENCODE_VERSION=${version}${isCross ? ` (cross: ${platformKey})` : ""}`);
 const buildResult = spawnSync(
   bun,
-  ["run", "script/build.ts", "--single", "--skip-install", "--skip-embed-web-ui"],
+  buildArgs,
   { cwd: opencodePkg, env: buildEnv, stdio: "inherit" },
 );
 if (buildResult.status !== 0) fail(`binary build failed (exit ${buildResult.status})`);
@@ -183,16 +209,30 @@ chmodSync(destBin, 0o755);
 writeFileSync(join(destDir, ".sha256"), hash + "\n");
 writeFileSync(join(destDir, ".source"), provenance + "\n");
 
+// ── .buildinfo sidecar — channel assertion for assert_ui_gate.sh (#1096) ────
+const buildinfo = [
+  `OPENCODE_CHANNEL=dev`,
+  `OPENCODE_VERSION=${version}`,
+  `BUILD_DATE=${new Date().toISOString()}`,
+].join("\n") + "\n";
+writeFileSync(join(destDir, ".buildinfo"), buildinfo);
+
 console.log(`[build:binary] installed: ${destBin}`);
 console.log(`[build:binary] sha256:    ${hash}`);
 console.log(`[build:binary] source:    ${provenance}`);
+console.log(`[build:binary] buildinfo: OPENCODE_CHANNEL=dev OPENCODE_VERSION=${version}`);
 
-// ── smoke test: version check ───────────────────────────────────────────────
-const ver = spawnSync(destBin, ["--version"], { encoding: "utf8", timeout: 10000 });
-if (ver.status !== 0) {
-  console.warn(`[build:binary] WARNING: version check failed (exit ${ver.status}): ${ver.stderr?.trim()}`);
+// ── smoke test: version check (native builds only) ──────────────────────────
+// Cross-compiled binaries cannot be executed on the build host.
+if (isCross) {
+  console.log(`[build:binary] cross-compiled for ${platformKey} — skipping version smoke test`);
 } else {
-  console.log(`[build:binary] version:   ${ver.stdout.trim()}`);
+  const ver = spawnSync(destBin, ["--version"], { encoding: "utf8", timeout: 10000 });
+  if (ver.status !== 0) {
+    console.warn(`[build:binary] WARNING: version check failed (exit ${ver.status}): ${ver.stderr?.trim()}`);
+  } else {
+    console.log(`[build:binary] version:   ${ver.stdout.trim()}`);
+  }
 }
 
 console.log("[build:binary] DONE");
