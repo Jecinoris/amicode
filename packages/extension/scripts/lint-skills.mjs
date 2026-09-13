@@ -11,6 +11,12 @@
 //                 templates (`<...>`, `{...}`, `*`) are not resolved)
 //   name          frontmatter `name:` ≠ the skill's directory name
 //   surface       frontmatter `surface:` not in {public, internal, entitled}
+//   vpath         rotted vault-path shapes (finding F28): `amico/vault/`,
+//                 `vault-aaron`, `~/.claude/` anywhere in the file → ERROR;
+//                 raw home paths embedding vault names (`~/...vaults.../`,
+//                 `~/...armonia-data.../`) → WARNING — the rot-prone class
+//                 (the armonia-aaron-trowbridge rename rotted these once);
+//                 warnings never fail the lint
 //   agents        unknown `agents:` value — WARNING only (the ontology sweep
 //                 is a later slice); warnings never fail the lint
 //
@@ -48,7 +54,18 @@ const AGENT_VALUES = new Set([
   "engineer", "pulse-designer",
 ]);
 const SURFACE_VALUES = new Set(["public", "internal", "entitled"]);
-const RULES = ["amico-plugin", "companion", "name", "surface"];
+const RULES = ["amico-plugin", "companion", "name", "surface", "vpath"];
+
+// F28 — the known-rotted vault-path idioms: the old ops-repo vault tree, the
+// pre-rename personal vault name, and the retired transcript substrate.
+const VPATH_ERROR_SHAPES = [
+  "amico/vault/", // old ops-repo path — superseded by $AMICO_OPS/
+  "vault-aaron", // pre-rename personal vault name — rots on every rename
+  "~/.claude/", // retired transcript substrate
+];
+// F28 — the rot-prone class: a raw home path that embeds a vault name. These
+// rotted once already (the armonia-aaron-trowbridge rename), so they warn.
+const VPATH_HOME_RE = /~\/[A-Za-z0-9_/.-]*(vaults|armonia-data)[A-Za-z0-9_/.-]*\//;
 
 const USAGE = `usage: node scripts/lint-skills.mjs [--dir <skills-root>] [--known <file>] [--json]`;
 
@@ -172,7 +189,24 @@ function lintSkill(skillDir, relDir) {
     }
   }
 
-  // (3) dead companion files — resolve inside the skill's own directory only
+  // (3) rotted vault-path shapes (F28) — errors for the retired idioms,
+  // warnings for rot-prone raw home paths. Per the doctrine: vaults by
+  // role/kind, the ops tree via $AMICO_OPS, never a raw home path that
+  // embeds a vault name. A line can trip both (e.g. a raw home path that
+  // also carries `vault-aaron`); the error fails, the warning documents.
+  lines.forEach((line, idx) => {
+    for (const shape of VPATH_ERROR_SHAPES) {
+      if (line.includes(shape)) {
+        findings.push({ rel, line: idx + 1, rule: "vpath", severity: "error", msg: `rotted vault-path shape \`${shape}\` — reference vaults by role/kind, the ops tree via $AMICO_OPS (finding F28)` });
+      }
+    }
+    const home = line.match(VPATH_HOME_RE);
+    if (home) {
+      findings.push({ rel, line: idx + 1, rule: "vpath", severity: "warning", msg: `raw home path embedding a vault name \`${home[0]}\` rots on rename — reference vaults by role/kind, resolved per the mount stack (finding F28)` });
+    }
+  });
+
+  // (4) dead companion files — resolve inside the skill's own directory only
   for (const { ref, line } of collectCompanionRefs(text)) {
     const cleaned = ref.replace(/^\.\//, "").split("#")[0].trim();
     if (!isResolvable(cleaned)) continue;
