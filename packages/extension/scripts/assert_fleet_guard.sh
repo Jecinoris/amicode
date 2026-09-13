@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# CI gate — fleet guard + tunnel template must be sane.
-# Fails if the guard would not prevent the silent-fork on a fleet client.
+# CI gate — fleet guard + installer + tunnel template must be sane.
+# Fails if the guard would not prevent the silent-fork on a fleet client, and
+# (amicode#1106, fleet rearchitect P3b-2) if any bash consumer still parses the
+# raw machine-local fleet config: the guard + installer read the PROJECTION
+# (the verb-refreshed cache / the verb's machine-parseable output) — the ONE
+# parser is amicissimo's, behind the `amico fleet` CLI.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 GUARD="$ROOT/tools/fleet/amico-opencode-fleet-guard"
@@ -12,15 +16,27 @@ ok() { echo "[fleet-gate] ok $*"; }
 
 [[ -f "$GUARD" ]] || fail "guard missing at $GUARD (fleet hardening not merged?)"
 [[ -x "$GUARD" ]] || fail "guard not executable — chmod +x $GUARD"
-grep -q 'fleet.json' "$GUARD" || fail "guard does not reference fleet.json config"
+grep -q 'projection.json' "$GUARD" || fail "guard does not reference the projection cache (the #1106 read path)"
+grep -q 'fleet status --projection' "$GUARD" || fail "guard does not shell the fleet-authority verb (the CLI is the only door)"
+grep -q 'contract_version' "$GUARD" || fail "guard missing the contract-version pin (must not trust an artifact it cannot speak)"
 grep -q 'exit 1' "$GUARD" || fail "guard missing client exit 1 (would not prevent fork)"
 grep -q 'FROZEN.*\.amico/server/bin/opencode' "$GUARD" || fail "guard missing frozen binary path"
-grep -q 'FLEET_CONFIG' "$GUARD" || fail "guard missing FLEET_CONFIG variable"
-ok "guard $GUARD"
+grep -q 'PROJECTION' "$GUARD" || fail "guard missing PROJECTION variable"
+if grep -qE '"role"[[:space:]]*:.*fleet\.json|fleet\.json.*"role"' "$GUARD" 2>/dev/null; then
+  fail "guard parses the raw fleet config for its role (the #1106 anti-goal — the projection cache is the only read)"
+fi
+ok "guard $GUARD (projection cache + verb door + contract pin)"
 
 [[ -f "$INSTALL" ]] || fail "installer missing at $INSTALL"
 [[ -x "$INSTALL" ]] || fail "installer not executable — chmod +x $INSTALL"
-ok "installer $INSTALL"
+grep -q 'fleet status --projection' "$INSTALL" || fail "installer does not shell the fleet-authority verb (#1106 — machine-parseable output, never a raw grep)"
+if grep -qE 'grep.*"role".*FLEET_CONFIG|FLEET_CONFIG.*grep' "$INSTALL" 2>/dev/null; then
+  fail "installer greps the raw fleet config for its role (the #1106 anti-goal)"
+fi
+if grep -q 'FLEET_CONFIG=' "$INSTALL" 2>/dev/null; then
+  fail "installer still names a FLEET_CONFIG raw path (the #1106 anti-goal — the verb is the only door)"
+fi
+ok "installer $INSTALL (verb output + bootstrap exception branches)"
 
 [[ -f "$PLIST" ]] || fail "tunnel plist template missing at $PLIST"
 grep -q "ServerAliveInterval=15" "$PLIST" || fail "plist ServerAliveInterval 15 missing"
@@ -29,9 +45,9 @@ grep -q "TCPKeepAlive=yes" "$PLIST" || fail "plist TCPKeepAlive yes missing"
 grep -q "127.0.0.1:4096:127.0.0.1:4096" "$PLIST" || fail "plist LocalForward 4096 missing"
 ok "tunnel plist $PLIST"
 
-# Guard + tunnel template are the source of truth for the installer; ensure the
-# installer itself is consistent (it references both).
-grep -q "FLEET_GUARD_REL\|FLEET_CONFIG_PATH\|fleet.json" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing fleet config reference"
+# The extension's health checks consume the projection topology state
+# (fleet_topology.ts) — the consumer import must be present (#1106).
+grep -q "fleet_topology" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing the fleet_topology consumer import (#1106)"
 
 # Packaged copy must stay in sync with repo root (the VSIX ships the packaged copy).
 PKG_GUARD="$ROOT/packages/extension/tools/fleet/amico-opencode-fleet-guard"
