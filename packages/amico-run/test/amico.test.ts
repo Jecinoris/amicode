@@ -281,9 +281,9 @@ describe("amico router — doctor v2 (surface inventory, #525)", () => {
       "--root-vscext", w.vscext,
       "--root-config", w.config,
       "--root-repo-amicode", w.repoAmicode,
-      "--root-repo-fork", w.repoFork,
       "--root-staging", w.staging,
       "--running-binary", w.running,
+      "--upstream-version", "1.18.10",
     ]);
     // exit reflects the v1 studio binding only (machine-dependent); the
     // surfaces contract is asserted on stdout, which must be JSON-only

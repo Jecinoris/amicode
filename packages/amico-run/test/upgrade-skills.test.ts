@@ -33,7 +33,7 @@ function verbArgs(w: DoctorWorld, surface: string, extra: string[] = []): string
     "--root-vscext", w.vscext,
     "--root-config", w.config,
     "--root-repo-amicode", w.repoAmicode,
-    "--root-repo-fork", w.repoFork,
+    "--upstream-version", "1.18.10",
     "--root-staging", w.staging,
     ...extra,
   ];

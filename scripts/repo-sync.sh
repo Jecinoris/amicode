@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# repo-sync — one-command sync for the amicode fleet repo + vendored fork.
+# repo-sync — one-command sync for the amicode fleet repo + vendored binary.
 # Idempotent: safe to run on a clean tree, shows drift without touching it in --check.
 #
 #   pnpm sync                # amicode repo: git fetch, pnpm, vendor, fleet (no writes beyond fetch/install)
 #   pnpm sync --fix          # also writes: git pull --ff-only, pnpm install, fetch:opencode, fleet install
-#   pnpm sync --fork         # opencode fork: show clone status, build/pin help
 #   bash scripts/repo-sync.sh --check  # CI twin: no writes, exit 1 on drift
 #
 # Machine-scoped fleet settings (guard/tunnel) are never auto-mutated here —
@@ -16,12 +15,11 @@ cd "$ROOT"
 
 CHECK=0
 FIX=0
-FORK=0
 for a in "$@"; do
   case "$a" in
     --check) CHECK=1 ;;
     --fix) FIX=1 ;;
-    --fork) FORK=1 ;;
+    --fork) echo "The --fork mode is retired. The opencode fork is archived; binary builds use the overlay tree now (pnpm run build:binary)." >&2; exit 2 ;;
     -h|--help) sed -n '1,80p' "$0"; exit 0 ;;
     *) echo "unknown flag $a (try --help)" >&2; exit 2 ;;
   esac
@@ -33,25 +31,6 @@ done
 say() { printf '\033[1;35m[repo-sync]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[repo-sync] FAIL %s\033[0m\n' "$*" >&2; }
 ok() { printf '\033[1;32m[repo-sync] ok %s\033[0m\n' "$*"; }
-
-# --- fork mode: just report clone status + build/pin help ---
-if [[ $FORK -eq 1 ]]; then
-  CLONE="${AMICODE_OPENCODE_SRC:-$ROOT/../opencode}"
-  say "fork clone: $CLONE"
-  if [[ ! -d "$CLONE/.git" ]]; then
-    fail "no clone at $CLONE — git clone git@github.com:harmoniqs/opencode.git $CLONE && curl -fsSL https://bun.sh/install | bash"
-    exit 1
-  fi
-  say "branch: $(git -C "$CLONE" symbolic-ref --short HEAD 2>/dev/null || git -C "$CLONE" rev-parse --short HEAD)"
-  say "status: $(git -C "$CLONE" status --porcelain | wc -l | tr -d ' ') dirty files"
-  say "lock: $(cat "$ROOT/packages/extension/opencode.lock.json" | python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(f\"{d.get('tag')} @ {d.get('ref','')[:7]} source={d.get('source')}\")" "$ROOT/packages/extension/opencode.lock.json" 2>&1 || echo "read error")"
-  say "vendor: $(cat "$ROOT/packages/extension/vendor/opencode/darwin-arm64/.source" 2>/dev/null || echo "missing")"
-  echo ""
-  echo "  pnpm --filter amicode opencode:build   # rebuild from $CLONE (OPENCODE_CHANNEL=dev, --any-ref)"
-  echo "  pnpm --filter amicode opencode:pin <tag>  # pin a cut release (e.g. v1.18.10-amicode.5)"
-  echo "  bash packages/extension/scripts/assert_ui_gate.sh vendor/opencode/darwin-arm64/opencode"
-  exit 0
-fi
 
 EXIT=0
 
@@ -79,20 +58,27 @@ else
   say "no upstream for $BRANCH (skip behind check)"
 fi
 
-# 2. gh auth + private fork access (needed for fetch:opencode release path)
+# 2. gh auth (needed for upstream staleness checks)
 if command -v gh >/dev/null 2>&1; then
   if gh auth status 2>&1 | grep -q "Logged in"; then ok "gh auth logged in"
   else fail "gh auth not logged in — gh auth login"; EXIT=1; fi
-  if gh repo view harmoniqs/opencode --json name 2>&1 | grep -q "opencode"; then ok "gh can view harmoniqs/opencode"
-  else fail "gh cannot view harmoniqs/opencode (private fork, need access from Aaron)"; EXIT=1; fi
 else
-  fail "gh CLI not on PATH — needed for private fork fetch"; EXIT=1
+  fail "gh CLI not on PATH"; EXIT=1
 fi
 
-# 3. node / pnpm / bun
+# 2b. overlay health: the app-bundle manifest must exist
+if [[ -f "$ROOT/packages/app-bundle/manifest.json" ]]; then
+  OVERLAY_VER="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT/packages/app-bundle/manifest.json','utf8')).fork_sha || 'unknown'" 2>/dev/null || echo "unknown")"
+  ok "overlay manifest present (base sha ${OVERLAY_VER:0:12})"
+else
+  fail "overlay manifest missing (packages/app-bundle/manifest.json) — run pnpm --filter @amicode/app-bundle sync:apply"
+  EXIT=1
+fi
+
+# 3. node / pnpm / bun (bun is required for local binary builds via build:binary)
 if command -v node >/dev/null 2>&1; then ok "node $(node --version)"; else fail "node not found (>=20)"; EXIT=1; fi
 if command -v pnpm >/dev/null 2>&1 || corepack pnpm --version >/dev/null 2>&1; then ok "pnpm $(pnpm --version 2>&1 | head -n1 || corepack pnpm --version 2>&1 | head -n1)"; else fail "pnpm not found (corepack enable)"; EXIT=1; fi
-if [[ -d "$ROOT/../opencode/.git" ]] && ! command -v bun >/dev/null 2>&1; then fail "bun not found (needed only when changing the fork: curl -fsSL https://bun.sh/install | bash)"; fi
+if command -v bun >/dev/null 2>&1; then ok "bun $(bun --version 2>&1 | head -n1)"; else say "bun not found (required for build:binary: curl -fsSL https://bun.sh/install | bash)"; fi
 
 # 4. pnpm install (check vs fix)
 if [[ $CHECK -eq 1 ]]; then

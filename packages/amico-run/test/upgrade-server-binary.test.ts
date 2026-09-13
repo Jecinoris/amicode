@@ -1,12 +1,13 @@
 // upgrade-server-binary.test.ts — the `amico upgrade server-binary` verb
-// (#526, spec D2): the full 9-step chain — env preflight, fork git discipline
-// (clean+ancestor or aborted-diverged), bun install + build --single (live
-// only — fixtures use --skip-build), smoke --version, freeze with opencode.prev
-// preserved, launchctl kickstart kick, poll health + running-sha==sidecar with
-// 120s timeout + one re-kick retry, restore-from-prev with sidecar REWRITE on
-// failure, prev deletion on success/verified-restore. Hermetic per the
-// kick-stub contract: the kick stub copies the frozen binary to the
-// --running-binary path; the health stub shapes the verify phases.
+// (#526, spec D2): the full 9-step chain — env preflight, amicode repo git
+// discipline (clean+ancestor or aborted-diverged), build:binary from overlay
+// (live only — fixtures use --skip-build), smoke --version, freeze with
+// opencode.prev preserved, launchctl kickstart kick, poll health +
+// running-sha==sidecar with 120s timeout + one re-kick retry,
+// restore-from-prev with sidecar REWRITE on failure, prev deletion on
+// success/verified-restore. Hermetic per the kick-stub contract: the kick
+// stub copies the frozen binary to the --running-binary path; the health
+// stub shapes the verify phases.
 import { describe, test, expect } from "vitest";
 import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -20,7 +21,7 @@ import {
   trackTmp,
   fakeBin,
   fixtureGit,
-  bumpForkHead,
+  bumpExtensionOnRemote,
   sha256File,
   FUTURE_BUILD,
   PAST_BUILD,
@@ -59,9 +60,9 @@ function verbArgs(w: DoctorWorld, extra: string[]): string[] {
     "--root-vscext", w.vscext,
     "--root-config", w.config,
     "--root-repo-amicode", w.repoAmicode,
-    "--root-repo-fork", w.repoFork,
     "--root-staging", w.staging,
     "--running-binary", w.running,
+    "--upstream-version", "1.18.10",
     "--dist-build-command", DIST_BUILD_STUB,
     ...extra,
   ];
@@ -175,10 +176,10 @@ describe("upgrade server-binary — idempotence (the AC fixture, VERSION-stale b
 
 // ── the git discipline aborts ────────────────────────────────────────────────
 
-describe("upgrade server-binary — fork git discipline", () => {
-  test("dirty fork → aborted-diverged; nothing frozen, no receipt lie", async () => {
+describe("upgrade server-binary — amicode repo git discipline", () => {
+  test("dirty amicode tree → aborted-diverged; nothing frozen, no receipt lie", async () => {
     const w = stageVersionStale();
-    writeFileSync(join(w.repoFork, "stray.txt"), "dirt\n");
+    writeFileSync(join(w.repoAmicode, "stray.txt"), "dirt\n");
     const r = await upgradeVerb(successArgs(w, freshArtifact()));
     expect(r.code).toBe(1);
     const receipt = r.json as Record<string, any>;
@@ -192,42 +193,42 @@ describe("upgrade server-binary — fork git discipline", () => {
     cleanup();
   });
 
-  test("diverged fork (local commit ahead) → aborted-diverged — never reset, never merge", async () => {
+  test("diverged amicode repo (local commit ahead) → aborted-diverged — never reset, never merge", async () => {
     const w = stageVersionStale();
-    writeFileSync(join(w.repoFork, "local-experiment.txt"), "local\n");
-    fixtureGit(w.repoFork, ["add", "-A"]);
-    fixtureGit(w.repoFork, ["commit", "-m", "local experiment"]);
+    writeFileSync(join(w.repoAmicode, "local-experiment.txt"), "local\n");
+    fixtureGit(w.repoAmicode, ["add", "-A"]);
+    fixtureGit(w.repoAmicode, ["commit", "-m", "local experiment"]);
     const r = await upgradeVerb(successArgs(w, freshArtifact()));
     expect(r.code).toBe(1);
     expect((r.json as Record<string, any>).outcome).toBe("aborted-diverged");
     // the diverged checkout is the human's to resolve
-    expect(existsSync(join(w.repoFork, "local-experiment.txt"))).toBe(true);
+    expect(existsSync(join(w.repoAmicode, "local-experiment.txt"))).toBe(true);
     cleanup();
   });
 
-  test("clean-but-behind fork is fast-forwarded to the ref before freezing", async () => {
+  test("clean-but-behind amicode repo is fast-forwarded to origin/main before freezing", async () => {
     const w = stageVersionStale();
-    bumpForkHead(w.remoteFork); // remote moves; the checkout stays clean-behind
+    bumpExtensionOnRemote(w.remoteAmicode, "0.2.7"); // remote moves; the checkout stays clean-behind
     const artifact = freshArtifact();
     const r = await upgradeVerb(successArgs(w, artifact));
     expect(r.code).toBe(0);
     const receipt = r.json as Record<string, any>;
     expect(receipt.outcome).toBe("upgraded");
-    expect(receipt.source_digests.fork_head_after).toBe(receipt.source_digests.fork_head_at_ref);
-    // the checkout's HEAD == origin/local/amicode (fast-forwarded, not reset)
+    expect(receipt.source_digests.amicode_head_after).toBe(receipt.source_digests.amicode_head_at_ref);
+    // the checkout's HEAD == origin/main (fast-forwarded, not reset)
     expect(
       (await import("node:child_process")).execFileSync("git",
-        ["-C", w.repoFork, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+        ["-C", w.repoAmicode, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
     ).toBe(
       (await import("node:child_process")).execFileSync("git",
-        ["-C", w.repoFork, "rev-parse", "origin/local/amicode"], { encoding: "utf8" }).trim(),
+        ["-C", w.repoAmicode, "rev-parse", "origin/main"], { encoding: "utf8" }).trim(),
     );
     cleanup();
   });
 
-  test("unreachable fork remote → aborted-unknown (pre-flight)", async () => {
+  test("unreachable amicode remote → aborted-unknown (pre-flight)", async () => {
     const w = stageVersionStale();
-    fixtureGit(w.repoFork, ["remote", "set-url", "origin", DEAD_REMOTE]);
+    fixtureGit(w.repoAmicode, ["remote", "set-url", "origin", DEAD_REMOTE]);
     const r = await upgradeVerb(successArgs(w, freshArtifact()));
     expect(r.code).toBe(1);
     expect((r.json as Record<string, any>).outcome).toBe("aborted-unknown");

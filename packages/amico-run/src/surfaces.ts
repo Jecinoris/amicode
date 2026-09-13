@@ -77,8 +77,9 @@ export interface SurfaceContext {
   rootConfig: string;
   /** amicode repo checkout (default ~/armonia/repos/amicode) */
   rootRepoAmicode: string;
-  /** opencode fork checkout, branch local/amicode (default ~/armonia/repos/opencode) */
-  rootRepoFork: string;
+  /** @deprecated — retained for S6 test migration. The fork is archived;
+   *  production paths use `upstreamVersion` instead. */
+  rootRepoFork?: string;
   /** staged opencode-project dir (default <rootServer>/opencode-project-staging/opencode-project) */
   rootStaging: string;
   /** running-process evidence stub; null = discover via ps */
@@ -87,6 +88,9 @@ export interface SurfaceContext {
   platform: string;
   run: Exec;
   discoverRunning: () => Promise<string | null>;
+  /** Latest upstream (anomalyco/opencode) release version. null = offline / unknown.
+   *  Injected by surfaceInventory after querying the GitHub API. */
+  upstreamVersion?: string | null;
 }
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -119,12 +123,12 @@ export function defaultSurfaceContext(): SurfaceContext {
     rootVscext: join(homedir(), ".vscode", "extensions"),
     rootConfig: join(homedir(), ".config", "opencode"),
     rootRepoAmicode: join(homedir(), "armonia", "repos", "amicode"),
-    rootRepoFork: join(homedir(), "armonia", "repos", "opencode"),
     rootStaging: join(rootServer, "opencode-project-staging", "opencode-project"),
     runningBinary: null,
     platform: `${process.platform}-${process.arch}`,
     run: realExec,
     discoverRunning: defaultDiscoverRunning,
+    upstreamVersion: null, // resolved by surfaceInventory via GitHub API
   };
 }
 
@@ -313,7 +317,7 @@ export async function newestExtensionDir(rootVscext: string): Promise<NewestExte
 
 // ── the six probes ───────────────────────────────────────────────────────────
 
-async function probeServerBinary(ctx: SurfaceContext, forkFetch: FetchOutcome): Promise<SurfaceRecord> {
+async function probeServerBinary(ctx: SurfaceContext): Promise<SurfaceRecord> {
   const surface: SurfaceName = "server-binary";
   const frozen = join(ctx.rootServer, "bin", "opencode");
   const sidecarPath = `${frozen}.sha256`;
@@ -355,25 +359,21 @@ async function probeServerBinary(ctx: SurfaceContext, forkFetch: FetchOutcome): 
     return { surface, version, source_version: null, verdict: "stale", evidence: [`running ${running} sha256 ${runningSha} ≠ frozen sha256 ${frozenSha} (restart pending)`, `frozen ${version} sha256 ${frozenSha} = sidecar`] };
   }
 
-  // version staleness vs the fetched fork HEAD
-  if (!forkFetch.ok) {
-    return { surface, version, source_version: null, verdict: "unknown", evidence: [`fork fetch failed (source of truth unreachable): ${forkFetch.error}`, `local checks pass: frozen sha = sidecar, running sha = frozen sha`] };
+  // version staleness vs upstream release (replaces fork HEAD date comparison)
+  const upstreamVersion = ctx.upstreamVersion;
+  if (upstreamVersion === null || upstreamVersion === undefined) {
+    return { surface, version, source_version: null, verdict: "unknown", evidence: [`upstream version unavailable (source of truth unreachable)`, `local checks pass: frozen sha = sidecar, running sha = frozen sha`] };
   }
-  const headDateRaw = await gitOutput(ctx.run, ctx.rootRepoFork, ["log", "-1", "--format=%cI", "origin/local/amicode"]);
-  if (headDateRaw === null) {
-    return { surface, version, source_version: null, verdict: "unknown", evidence: ["fetched, but origin/local/amicode not found in the fork", `frozen ${version} sha256 ${frozenSha} = sidecar`] };
-  }
-  const headDate = new Date(headDateRaw.trim());
-  const headSha = (await gitOutput(ctx.run, ctx.rootRepoFork, ["rev-parse", "--short", "origin/local/amicode"]))?.trim() ?? "";
-  const buildDate = parseBuildDate(version);
-  if (buildDate !== null && headDate.getTime() > 0 && buildDate.getTime() < headDate.getTime()) {
+  const frozenBase = versionPrefix(version);
+  const cmp = compareVersions(frozenBase, upstreamVersion);
+  if (cmp < 0) {
     return {
       surface,
       version,
-      source_version: headDateRaw.trim(),
+      source_version: upstreamVersion,
       verdict: "stale",
       evidence: [
-        `build date ${buildDate.toISOString()} < HEAD commit date ${headDate.toISOString()} (origin/local/amicode ${headSha})`,
+        `frozen version ${frozenBase} < upstream ${upstreamVersion}`,
         `frozen ${version} sha256 ${frozenSha} = sidecar; running sha = frozen sha`,
       ],
     };
@@ -381,12 +381,12 @@ async function probeServerBinary(ctx: SurfaceContext, forkFetch: FetchOutcome): 
   return {
     surface,
     version,
-    source_version: headDateRaw.trim(),
+    source_version: upstreamVersion,
     verdict: "current",
     evidence: [
       `frozen ${version} sha256 ${frozenSha} = sidecar`,
       `running ${running} sha256 = frozen sha256`,
-      `build date ${buildDate ? buildDate.toISOString() : "unparseable"} ≥ HEAD commit date ${headDate.toISOString()} (origin/local/amicode ${headSha})`,
+      `frozen version ${frozenBase} ≥ upstream ${upstreamVersion}`,
     ],
   };
 }
@@ -429,40 +429,33 @@ async function probeExtension(ctx: SurfaceContext, amicodeFetch: FetchOutcome): 
   };
 }
 
-async function probeVendoredBinary(ctx: SurfaceContext, forkFetch: FetchOutcome): Promise<SurfaceRecord> {
+async function probeVendoredBinary(ctx: SurfaceContext): Promise<SurfaceRecord> {
   const surface: SurfaceName = "vendored-binary";
-  if (!forkFetch.ok) {
-    return { surface, version: null, source_version: null, verdict: "unknown", evidence: [`fork fetch failed (release tags not refreshable): ${forkFetch.error}`] };
+  const upstreamVersion = ctx.upstreamVersion;
+  if (upstreamVersion === null || upstreamVersion === undefined) {
+    return { surface, version: null, source_version: null, verdict: "unknown", evidence: [`upstream version unavailable (source of truth unreachable — no network)`] };
   }
-  const tagsRaw = await gitOutput(ctx.run, ctx.rootRepoFork, ["tag", "--list"]);
-  const releaseTags = (tagsRaw ?? "").split("\n").map((t) => t.trim()).filter(Boolean).filter((t) => /^v\d+\.\d+\.\d+-amicode\.\d+$/.test(t));
-  if (releaseTags.length === 0) {
-    return { surface, version: null, source_version: null, verdict: "unknown", evidence: ["no fork release tags (v<base>-amicode.<n>) in the fetched fork"] };
-  }
-  releaseTags.sort((a, b) => compareVersions(a.replace(/^v/, ""), b.replace(/^v/, "")));
-  const newestTag = releaseTags[releaseTags.length - 1];
-  const baseVersion = newestTag.replace(/^v(\d+\.\d+\.\d+)-amicode\.\d+$/, "$1");
 
   const bin = join(ctx.rootRepoAmicode, "packages", "extension", "vendor", "opencode", ctx.platform, "opencode");
   const binSha = await fileSha(bin);
   if (binSha === null) {
-    return { surface, version: null, source_version: baseVersion, verdict: "stale", evidence: [`vendored binary missing: ${bin}`, `latest fork release tag ${newestTag} (base ${baseVersion})`] };
+    return { surface, version: null, source_version: upstreamVersion, verdict: "stale", evidence: [`vendored binary missing: ${bin}`, `upstream release ${upstreamVersion}`] };
   }
   const vr = await ctx.run(bin, ["--version"]);
   if (vr.code !== 0) {
-    return { surface, version: null, source_version: baseVersion, verdict: "stale", evidence: [`vendored binary --version failed (exit ${vr.code}): ${firstErrLine(vr.stderr)}`, `latest fork release tag ${newestTag} (base ${baseVersion})`] };
+    return { surface, version: null, source_version: upstreamVersion, verdict: "stale", evidence: [`vendored binary --version failed (exit ${vr.code}): ${firstErrLine(vr.stderr)}`, `upstream release ${upstreamVersion}`] };
   }
   const printed = vr.stdout.trim().split("\n").pop() ?? "";
-  const cmp = compareVersions(printed, baseVersion);
+  const cmp = compareVersions(versionPrefix(printed), upstreamVersion);
   return {
     surface,
     version: printed,
-    source_version: baseVersion,
-    verdict: cmp === 0 ? "current" : "stale",
+    source_version: upstreamVersion,
+    verdict: cmp >= 0 ? "current" : "stale",
     evidence: [
       `vendored ${bin} --version ${printed}`,
-      `latest fork release tag ${newestTag} (base ${baseVersion})`,
-      cmp === 0 ? `version = release tag base` : cmp < 0 ? `version behind release tag base ${baseVersion}` : `version ahead of release tag base ${baseVersion}`,
+      `upstream release ${upstreamVersion}`,
+      cmp === 0 ? `version = upstream release` : cmp < 0 ? `version behind upstream release ${upstreamVersion}` : `version ahead of upstream release ${upstreamVersion}`,
     ],
   };
 }
@@ -627,18 +620,33 @@ async function guarded(name: SurfaceName, fn: () => Promise<SurfaceRecord>): Pro
   }
 }
 
+/** Query the latest upstream release version from anomalyco/opencode via
+ *  the GitHub API. Returns the version string (e.g. "1.18.12") or null
+ *  when offline / error. Exported for test injection. */
+export async function queryUpstreamVersion(run: Exec): Promise<string | null> {
+  const r = await run("gh", ["api", "repos/anomalyco/opencode/releases/latest", "--jq", ".tag_name"]);
+  if (r.code !== 0) return null;
+  const tag = r.stdout.trim();
+  // Strip leading "v" if present (e.g. "v1.18.12" → "1.18.12")
+  return tag.replace(/^v/, "") || null;
+}
+
 export async function surfaceInventory(partial: Partial<SurfaceContext> = {}): Promise<SurfacesReport> {
   const ctx: SurfaceContext = { ...defaultSurfaceContext(), ...partial };
-  // source-of-truth refresh: one fetch per source repo, shared by its probes.
-  // #804: the amicode fetch now carries TAGS — the mode-registry byte
-  // authority is the machine's RELEASE TAG (never origin HEAD), and the
-  // release index is read at origin/main.
-  const forkFetch = await fetchOrigin(ctx.run, ctx.rootRepoFork, true); // tags: release tags
+  // source-of-truth refresh: the amicode repo git-fetch — needed for extension
+  // and agent card probes — plus the upstream version query for binary staleness.
   const amicodeFetch = await fetchOrigin(ctx.run, ctx.rootRepoAmicode, true);
+
+  // Upstream version: use injected value if provided (including explicit null
+  // for "offline" testing). Only query the API when the field is undefined.
+  if (ctx.upstreamVersion === undefined) {
+    ctx.upstreamVersion = await queryUpstreamVersion(ctx.run);
+  }
+
   const surfaces: SurfaceRecord[] = [];
-  surfaces.push(await guarded("server-binary", () => probeServerBinary(ctx, forkFetch)));
+  surfaces.push(await guarded("server-binary", () => probeServerBinary(ctx)));
   surfaces.push(await guarded("extension", () => probeExtension(ctx, amicodeFetch)));
-  surfaces.push(await guarded("vendored-binary", () => probeVendoredBinary(ctx, forkFetch)));
+  surfaces.push(await guarded("vendored-binary", () => probeVendoredBinary(ctx)));
   surfaces.push(await guarded("staged-skills", () => probeStagedSkills(ctx)));
 
   // #804: the mode-registry probe state, resolved ONCE and shared by both
