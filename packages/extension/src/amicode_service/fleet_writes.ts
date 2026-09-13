@@ -30,6 +30,7 @@
 import * as http from "node:http";
 import { randomUUID } from "node:crypto";
 import type { DataPlaneOutcome } from "./fleet_posture";
+import type { StructuralSignal } from "./attach_state";
 import { HubCredentialRead, hubUpstreamAuthHeader } from "./hub_credential";
 
 /** The named max body cap for the write pipeline (mirrors the service's
@@ -117,6 +118,12 @@ export interface FleetWriteDeps {
   maxRetries?: number;
   /** The posture detector's diet: every attempt's outcome feeds it. */
   onOutcome?: (o: DataPlaneOutcome) => void;
+  /** #1069 (ADR-0005, row 3 — the structural seam): the 401 revocation (the
+   *  auth-revoked shape) ALSO lands here as a typed event for the P4a-3
+   *  proposal queue — no behavior beyond emission (no posture write, no mode
+   *  write; revocation stays honest unreachability, never degradation).
+   *  Absent → zero behavior change. */
+  onStructural?: (signal: StructuralSignal) => void;
   /** The tunnel generation stamp (D7) merged into our envelopes. */
   responseStamp?: () => Record<string, string> | undefined;
 }
@@ -241,6 +248,14 @@ export async function executeFleetWrite(deps: FleetWriteDeps, write: FleetWriteR
     }
     if (res.status === 401) {
       // D5: the mid-flight entitlement lapse — read-only-with-pointer.
+      // #1069: the auth-revoked STRUCTURAL signal rides the same outcome —
+      // a typed event for the P4a-3 queue, never an attach-state write.
+      deps.onStructural?.({
+        kind: "structural",
+        class: "auth-revoked",
+        detail: "fleet write answered HTTP 401 — entitlement revoked mid-flight (D5 read-only-with-pointer)",
+        at: new Date().toISOString(),
+      });
       return {
         status: "failed",
         httpStatus: 401,
