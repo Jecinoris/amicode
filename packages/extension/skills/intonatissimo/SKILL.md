@@ -94,9 +94,10 @@ solve!(ptp; max_iter = 5, tol = 1e-3, γ = 0.8, min_nominal_fidelity = 0.8)
   error convergence, default 1e-3), `γ` (trust-region schedule factor, default
   0.8), `line_search` (Armijo backtracking, default `true`), `ipopt_options`
   (forwarded to the inner NLP solve), `max_rejections` (early stop after n
-  consecutive line-search rejections), `polyak_avg` (average the last n
-  iterates before syncing), `min_nominal_fidelity` (refuses to run on a
-  poorly-converged pulse; set 0 to skip).
+  consecutive line-search rejections), `min_nominal_fidelity` (refuses to run on a
+  poorly-converged pulse; set 0 to skip). The old `polyak_avg` solve kwarg is
+  **deprecated** — average the last n iterates before syncing by passing
+  `selector = PolyakAverage(n)` to `PulseTuningProblem` instead.
 - The goal measurements are resolved **once** at solve start and fixed for the
   whole solve — pass `y_goal = [...]` to `PulseTuningProblem` to supply them
   explicitly.
@@ -168,7 +169,12 @@ c     = capture(sub, direction)                           # fraction of the dire
 > consumes (the conjugation-frames / encoded-decay-rate kernels, imported from
 > Piccolissimo as `conjugation_frames` and companions) are present only when
 > your Piccolissimo environment is paired with the conjugation-kernels branch
-> (pre-paired by your delivery contact) rather than the
-> mainline checkout. If the pairing is wrong, `using Intonatissimo` fails at
+> (`wip/414-conjugation-kernels`, pre-paired by your delivery contact) rather
+> than the mainline checkout. Cross-check, flagged not reconciled: the
+> `piccolissimo-dev` card's stated ground-truth checkout
+> (`feat/429-exponential-extraction`, v0.4.0) does **not** carry these kernels —
+> they are outside that card's module tree — so the pairing branch is a
+> delivery-side pairing distinct from that ground truth. If the pairing is
+> wrong, `using Intonatissimo` fails at
 > load with a missing-name error — re-pair the environment; the calls above do
 > not change.
