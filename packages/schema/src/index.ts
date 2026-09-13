@@ -163,6 +163,32 @@ export {
   type FetchSurface,
 } from "./watched_repos.js";
 
+// The fleet projection reader (amicode#1068, fleet rearchitect P3b-1): the
+// TS consumer of amicissimo's fleet-authority projection (contract v1, schema
+// v1 — the FORMAT is owned by amicissimo's fleet_authority package; this
+// module mirrors its contract module's read gate + epoch-bound freshness
+// semantics and renders per-section provenance BESIDE the data, never merged).
+// Same documented root seam: amico-run's `amico fleet status --projection`
+// verb and the extension's P3b-2 consumer both import from here, so the
+// rearchitect's "one path, versioned" invariant holds across languages —
+// publish, don't codegen (spec §3 D1).
+export {
+  FLEET_CONTRACT_VERSION,
+  SUPPORTED_PROJECTION_SCHEMA_VERSIONS,
+  MODE_VOCABULARY,
+  POSTURE_VOCABULARY,
+  FleetContractVersionError,
+  readProjection,
+  freshnessBetween,
+  freshnessAdvisory,
+  renderFleetStatus,
+  type FleetFreshness,
+  type FleetProjection,
+  type FleetProvenance,
+  type FleetSection,
+  type FleetFreshnessStamp,
+} from "./fleet_projection.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"

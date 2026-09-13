@@ -4,7 +4,7 @@ description: Implement one TDD-ready GitHub issue (a sub-issue, or an undecompos
 agents: []
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Implement an Issue
@@ -35,12 +35,23 @@ It is the development counterpart to the design pipeline (`brainstorming` → `w
 
 | | **Standalone** (default) | **Orchestrated** (`--orchestrated`) |
 |---|---|---|
-| Invoked by | a human off the board, in the main session | `develop`, one slice per worktree |
-| Branch | this skill creates it (Step 3) | use the caller-provided worktree branch; skip creation |
+| Invoked by | a human off the board, in the main session | `develop`, one slice per worktree (spawned via `amicode_session` with `workspace: "create"`) |
+| Branch | this skill creates it (Step 3) | use the caller-provided `opencode/<slug>` worktree branch; skip creation |
+| Bootstrap | not needed (main checkout) | **required** — `pnpm install` (or equivalent) before any build/test (see Worktree contract) |
 | PR | opens a draft PR, drives it to ready/merge | **opens no PR, performs no merge** |
 | Terminus | AFK→merge / HITL→review (Step 6) | return the branch; `develop` merges + integration-tests |
 
 Orchestrated mode is dispatched by `develop` (one slice per worktree, via the Engineer). It can also be invoked directly to exercise the seam.
+
+### Worktree contract (orchestrated mode)
+
+When the session was spawned with `workspace: "create"`, the implementer operates in an isolated worktree. Three rules:
+
+1. **Bootstrap first.** The worktree is a fresh checkout — dependencies are not installed. The implementer's first action before any build or test is project bootstrap: `pnpm install` (or the project's package manager equivalent — `npm install`, `yarn`, `pip install -e .`, `julia --project=. -e 'using Pkg; Pkg.instantiate()'`, etc.). Detect the package manager from the lock file present in the worktree root.
+
+2. **Stay on the worktree branch.** Commits land on the worktree's `opencode/<slug>` branch — the branch created by the worktree API and already checked out. **Do not** create new branches, switch branches, or check out other refs. The parent `develop` session owns branch topology; the implementer only commits to what is already checked out.
+
+3. **`index.lock` retry.** Concurrent worktrees sharing the same `.git` directory may contend on `.git/index.lock`. If `git add` or `git commit` fails with `Unable to create '…/.git/index.lock': File exists`, **retry once** after a 2-second wait. If the retry also fails, report the lock contention error — do not delete the lock file.
 
 ---
 
@@ -141,6 +152,8 @@ branch: <branch-name>
 commit_shas: [<sha>, ...]
 ac_results:
   - {criterion: "<text>", green: true|false}
+skill_findings: []        # optional: skill-vs-reality conflicts hit this slice
+                          # (findings-file paths or terse one-liners → ledger amicode/skills-integrity/)
 notes: "<blocker / deviation / escalation detail>"
 ```
 
@@ -156,6 +169,7 @@ In `--orchestrated` mode `branch` is always set and **no PR exists** — `develo
 - Never create a branch or PR at issue-creation time; the draft PR is born at the first commit.
 - Never reimplement the TDD loop inline — always call `tdd`.
 - Inherit `tdd`'s test-protection rules: never delete, skip, or mark-broken tests to force green.
+- **Skill-reality conflicts are findings, not workarounds.** If a skill instruction (an API name, path, constant, command) doesn't match observed reality, do the work AND record the conflict — quote the skill line, state the deviation — in the return's `skill_findings:` list, so the campaign ledger (`amicode/skills-integrity/`, personal vault) never depends on the implementer's filesystem reach.
 - `complete` only when **every** Acceptance Criterion is green — no "complete minus one".
 
 ## Source of truth

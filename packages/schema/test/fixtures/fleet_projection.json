@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "publisher": { "identity": "fixture-publisher", "published_at": "2026-09-13T09:30:00Z" },
+  "freshness": { "counter": 12, "hub_epoch": "22222222-2222-4222-8222-222222222222" },
+  "sections": {
+    "mode": {
+      "value": "standalone",
+      "provenance": { "source": "fleet.json", "parsed_from": "base default (mode absent = standalone)" }
+    },
+    "posture": {
+      "value": "degraded",
+      "provenance": { "source": "fleet-status.json", "parsed_from": "posture field: 'degraded'" }
+    },
+    "health": {
+      "value": {
+        "collected_at": "2026-08-30T22:10:04Z",
+        "devices": [
+          { "name": "atom-01", "reachable": true, "detail": "this machine" },
+          { "name": "ion-02", "reachable": false, "detail": "ssh failed" },
+          { "name": "hub-03", "reachable": true, "detail": "ssh ok" }
+        ],
+        "chat_db": { "sessions": null, "last_session": "null", "server_http": "200" },
+        "server_guard": { "ok": false, "pid": "", "db_file": "none", "served_sessions": 100, "notes": "server not running;" },
+        "vault_sync": { "age_minutes": 0, "clean": true },
+        "repos": [
+          { "name": "lab-notebook", "branch": "main", "dirty": 12, "ahead": 0, "behind": 3, "wip_branches": "wip/alpha" }
+        ]
+      },
+      "provenance": {
+        "source": "fleet-status.json",
+        "parsed_from": "fields: chat_db, collected_at, devices[3], repos[1], server_guard, vault_sync"
+      }
+    }
+  }
+}
