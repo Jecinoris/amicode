@@ -69,15 +69,32 @@ function mkProblemCard(
 // ── Fleet section ────────────────────────────────────────────────────────────
 
 describe("buildFleetSection (lean fleet line + pointers)", () => {
-  it("no fleet.json (standalone machine) → no section", () => {
+  it("no projection (standalone machine — the base default) → no section", () => {
     const dir = mkTmp("fleet-");
-    const s = fleetSectionWith({ configPath: path.join(dir, "absent.json") });
+    const s = fleetSectionWith({ projectionPath: path.join(dir, "absent.json") });
     expect(s).toBe("");
+  });
+  it("a projection with no topology section (mode-only standalone) → no section", () => {
+    const dir = mkTmp("fleet-");
+    const proj = path.join(dir, "projection.json");
+    fs.writeFileSync(proj, JSON.stringify({
+      schema_version: 1,
+      contract_version: 1,
+      sections: { mode: { value: "standalone" } },
+    }));
+    expect(fleetSectionWith({ projectionPath: proj })).toBe("");
   });
   it("server role with live status renders role, devices, freshness", () => {
     const dir = mkTmp("fleet-");
-    const cfg = path.join(dir, "fleet.json");
-    fs.writeFileSync(cfg, JSON.stringify({ role: "server", canonical: { host: "127.0.0.1", port: 4096 } }));
+    const proj = path.join(dir, "projection.json");
+    fs.writeFileSync(proj, JSON.stringify({
+      schema_version: 1,
+      contract_version: 1,
+      sections: {
+        mode: { value: "fleet" },
+        topology: { value: { role: "server", canonical: { host: "127.0.0.1", port: 4096 } } },
+      },
+    }));
     const status = path.join(dir, "fleet-status.json");
     fs.writeFileSync(
       status,
@@ -90,9 +107,10 @@ describe("buildFleetSection (lean fleet line + pointers)", () => {
         ],
       }),
     );
-    const s = fleetSectionWith({ configPath: cfg, statusPath: status });
+    const s = fleetSectionWith({ projectionPath: proj, statusPath: status });
     expect(s).toContain("## Fleet (live)");
     expect(s).toContain("**server** — this machine is the canonical Amicode server");
+    expect(s).toContain("projection.json"); // the #1106 read path is named in the rendered line
     expect(s).toContain("Devices: 2/3 reachable (mini, macbook, erlich)");
     expect(s).toContain("refreshed 0 min ago");
     expect(s).toContain("fleet-status.json");
@@ -100,18 +118,28 @@ describe("buildFleetSection (lean fleet line + pointers)", () => {
   });
   it("unreadable status degrades to 'status unknown', not an error", () => {
     const dir = mkTmp("fleet-");
-    const cfg = path.join(dir, "fleet.json");
-    fs.writeFileSync(cfg, JSON.stringify({ role: "client" }));
-    const s = fleetSectionWith({ configPath: cfg, statusPath: path.join(dir, "nope.json") });
+    const proj = path.join(dir, "projection.json");
+    fs.writeFileSync(proj, JSON.stringify({
+      schema_version: 1,
+      contract_version: 1,
+      sections: { topology: { value: { role: "client" } } },
+    }));
+    const s = fleetSectionWith({ projectionPath: proj, statusPath: path.join(dir, "nope.json") });
     expect(s).toContain("**client** — rides the tunnel to the canonical server");
     expect(s).toContain("status unknown");
+  });
+  it("a corrupt/unreadable projection → no section (silent-on-optional, the plugin's discipline — never a raw-file fallback)", () => {
+    const dir = mkTmp("fleet-");
+    const proj = path.join(dir, "projection.json");
+    fs.writeFileSync(proj, "{ corrupt");
+    expect(fleetSectionWith({ projectionPath: proj })).toBe("");
   });
 });
 
 // buildFleetSection is module-private; reach it through buildStackStateBlock's
-// seams for these unit cases (config + status stubbed, everything else empty).
-function fleetSectionWith(opts: { configPath?: string; statusPath?: string }): string {
-  const stubs = stubAllSeams({ fleetConfig: opts.configPath, fleetStatus: opts.statusPath });
+// seams for these unit cases (projection + status stubbed, everything else empty).
+function fleetSectionWith(opts: { projectionPath?: string; statusPath?: string }): string {
+  const stubs = stubAllSeams({ fleetProjection: opts.projectionPath, fleetStatus: opts.statusPath });
   try {
     const block = buildStackStateBlock() ?? "";
     const m = block.match(/## Fleet \(live\)[\s\S]*?(?=\n\n## |\n*$)/);
@@ -725,7 +753,7 @@ describe("recent problems derived from problem-card frontmatter (KNOWLEDGE.md zo
 
 interface SeamOpts {
   vaultsRoot?: string;
-  fleetConfig?: string;
+  fleetProjection?: string;
   fleetStatus?: string;
   runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
@@ -734,7 +762,7 @@ interface SeamOpts {
 
 const SEAM_KEYS = [
   "AMICO_VAULTS_ROOT",
-  "AMICO_FLEET_CONFIG",
+  "AMICO_FLEET_PROJECTION",
   "AMICO_FLEET_STATUS",
   "AMICODE_OPS_DIR",
   "AMICODE_CONNECTIONS_FILE",
@@ -795,7 +823,7 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
   const runs = path.join(mkTmp("runs-"), "none");
   const fleetDir = mkTmp("fleetdir-");
   process.env.AMICO_VAULTS_ROOT = root;
-  process.env.AMICO_FLEET_CONFIG = opts.fleetConfig ?? path.join(fleetDir, "absent-fleet.json");
+  process.env.AMICO_FLEET_PROJECTION = opts.fleetProjection ?? path.join(fleetDir, "absent-projection.json");
   process.env.AMICO_FLEET_STATUS = opts.fleetStatus ?? path.join(fleetDir, "absent-status.json");
   process.env.AMICODE_OPS_DIR = ops; // no solver-mode.json → piccolo/ready → no section
   process.env.AMICODE_CONNECTIONS_FILE = path.join(conn, "absent.json"); // not connected

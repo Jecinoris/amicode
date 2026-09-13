@@ -308,11 +308,20 @@ function buildLiveRunsBlock(): string {
 
 // ── Fleet state ──────────────────────────────────────────────────────────────
 
-function fleetConfigFile(override?: string): string {
+// #1106 (fleet rearchitect P3b-2): the fleet role comes from the projection
+// cache — <home>/.amico/ops/fleet/projection.json, refreshed by
+// `amico fleet status --projection`. The machine-local fleet config file has
+// exactly ONE parser (amicissimo's fleet authority, behind the CLI); this
+// plugin is a projection consumer (it runs in opencode's Bun runtime and
+// must stay dependency-free, so it reads the cached artifact
+// shape-tolerantly — contract validation is the extension's reader's job,
+// and the plugin never falls back to the raw file).
+
+function fleetProjectionFile(override?: string): string {
   if (override) return override;
-  const env = process.env.AMICO_FLEET_CONFIG;
+  const env = process.env.AMICO_FLEET_PROJECTION;
   if (env && env.trim() !== "") return env.trim();
-  return path.join(os.homedir(), ".amico", "ops", "fleet", "fleet.json");
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "projection.json");
 }
 
 function fleetStatusFile(override?: string): string {
@@ -322,12 +331,21 @@ function fleetStatusFile(override?: string): string {
   return path.join(os.homedir(), ".amico", "ops", "fleet-status.json");
 }
 
-/** Fleet role from fleet.json — "server" | "client" | "standalone".
- *  No file = null (a standalone machine has no fleet to report). */
-function readFleetRole(configPath?: string): string | null {
+/** Fleet role from the projection cache's topology section —
+ *  "server" | "client" | "standalone" (verbatim; anything else surfaces as
+ *  itself). Absent/unreadable projection, or one with no topology section,
+ *  = null (the base default — a standalone machine has nothing to report). */
+function readFleetRoleFromProjection(projectionPath?: string): string | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(fleetConfigFile(configPath), "utf8")) as Record<string, unknown>;
-    return typeof parsed.role === "string" && parsed.role !== "" ? parsed.role : null;
+    const parsed = JSON.parse(fs.readFileSync(fleetProjectionFile(projectionPath), "utf8")) as Record<string, unknown>;
+    const sections = parsed.sections;
+    if (typeof sections !== "object" || sections === null) return null;
+    const topology = (sections as Record<string, unknown>).topology;
+    if (typeof topology !== "object" || topology === null) return null;
+    const value = (topology as Record<string, unknown>).value;
+    if (typeof value !== "object" || value === null) return null;
+    const role = (value as Record<string, unknown>).role;
+    return typeof role === "string" && role !== "" ? role : null;
   } catch {
     return null;
   }
@@ -371,9 +389,10 @@ function readFleetStatus(statusPath?: string): FleetStatusSummary | undefined {
 
 /** Lean fleet line + on-demand pointers (the reader's choice: detail loads
  *  from fleet-status.json / the fleet skill only when relevant). Absent
- *  fleet.json (standalone or no fleet tooling) → "" — nothing to say. */
-function buildFleetSection(opts: { configPath?: string; statusPath?: string } = {}): string {
-  const role = readFleetRole(opts.configPath);
+ *  projection (standalone or no fleet tooling — or a projection with no
+ *  topology section) → "" — nothing to say. */
+function buildFleetSection(opts: { projectionPath?: string; statusPath?: string } = {}): string {
+  const role = readFleetRoleFromProjection(opts.projectionPath);
   if (role === null) return "";
 
   const roleText =
@@ -382,7 +401,7 @@ function buildFleetSection(opts: { configPath?: string; statusPath?: string } = 
       : role === "client"
         ? "**client** — rides the tunnel to the canonical server"
         : `**${role}**`;
-  const lines = [`## Fleet (live)`, `Role: ${roleText} (\`~/.amico/ops/fleet/fleet.json\`).`];
+  const lines = [`## Fleet (live)`, `Role: ${roleText} (from the fleet projection at \`~/.amico/ops/fleet/projection.json\`).`];
 
   const status = readFleetStatus(opts.statusPath);
   if (status) {
