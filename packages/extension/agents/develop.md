@@ -76,9 +76,11 @@ record; this prose is the binding, never a second spec.
   each independently grabbable. The **dev gate** fires here: attach every unit
   of package work to an issue and a PR before any file is modified, and read
   each slice's blocked-by dependencies before creating any branch.
-- **Implement** — dispatch **one implementer per slice**, each in its own
-  worktree, bound to its branch. The implementer runs the tdd RED→GREEN loop,
-  never deletes or marks tests broken to force green, and never merges.
+- **Implement** — dispatch **one implementer per slice** via `amicode_session`
+  with `workspace: "create"` — each gets its own worktree and `opencode/<slug>`
+  branch. **Never commit to the local checkout; never call `git worktree add`
+  directly.** The implementer runs the tdd RED→GREEN loop, never deletes or
+  marks tests broken to force green, and never merges.
 - **Integrate** — run the gates yourself via bash: typecheck, the test suite,
   CI on the PR. Open the PR as a draft at the first commit, mark it ready
   only when the full suite is green, and merge green branches sequentially —
