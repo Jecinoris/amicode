@@ -1,19 +1,25 @@
 // Fleet health — pure, testable checks that prevent the 2026-08-07 / 2026-08-09
 // silent-fork regressions (ADR 0005, #279, #324, #338) from recurring.
 //
-// Every check is synchronous + injectable (no direct fs/exec) so it is
-// unit-testable and never blocks activation. The extension's `amicode.healthcheck`
-// and activation warning call these; `tools/fleet/install.sh --check` is the CLI twin.
+// Every check is synchronous + injectable (no direct fs/exec beyond the
+// injectable defaults) so it is unit-testable and never blocks activation. The
+// extension's `amicode.healthcheck` and activation warning call these;
+// `tools/fleet/install.sh --check` is the CLI twin.
 //
-// Fleet role is determined by ~/.amico/ops/fleet/fleet.json (no file = standalone).
-// A fleet client must NEVER spawn a local opencode server. The guard
-// `tools/fleet/amico-opencode-fleet-guard` enforces it by reading fleet.json and
-// `exit 1` when role = "client".
+// #1106 (fleet rearchitect P3b-2): fleet role + canonical port come from the
+// projection-cache topology state (fleet_topology.ts — @amicode/schema's
+// reader over ~/.amico/ops/fleet/projection.json), NEVER the raw fleet.json.
+// Absent projection renders the base-default standalone WITH the refresh
+// pointer; a broken projection is a RENDERED fail state carrying the reader's
+// rejection + the refresh fix — neither is ever a silent raw-file fallthrough.
+// A fleet client must NEVER spawn a local opencode server; the guard
+// `tools/fleet/amico-opencode-fleet-guard` enforces it by reading the
+// projection cache and `exit 1` when role = "client".
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import { readFleetConfig, type FleetConfig } from "./fleet_fallback";
+import { readFleetTopology, type FleetTopologyState } from "./fleet_topology";
 
 export const FLEET_GUARD_REL = "tools/fleet/amico-opencode-fleet-guard";
 export const FLEET_GUARD_INSTALL = path.join(homedir(), ".local", "bin", "amico-opencode-fleet-guard");
@@ -65,17 +71,24 @@ export function checkFleetGuard(
   return { name: "Fleet guard", ok: true, detail: `installed and in sync (${installedGuardPath})` };
 }
 
-/** Settings check: amicode.opencodeBinary must point at the guard and opencodePort must match fleet config. */
+/** The canonical port the settings/tunnel checks compare against — from the
+ *  projection topology (base default 4096 when the topology carries none). */
+function fleetPort(topology: FleetTopologyState | undefined): number {
+  if (topology === undefined || topology.kind !== "ok") return 4096;
+  return topology.canonical?.port ?? 4096;
+}
+
+/** Settings check: amicode.opencodeBinary must point at the guard and opencodePort must match the projection's canonical port. */
 export function checkFleetSettings(
   configuredBinary: string,
   configuredPort: number,
-  opts: { platform?: string; fleetConfig?: FleetConfig | null } = {},
+  opts: { platform?: string; topology?: FleetTopologyState } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet settings", ok: true, detail: "skipped (not darwin)" };
   }
-  const cfg = opts.fleetConfig ?? readFleetConfig();
-  const wantPort = cfg?.canonical?.port ?? 4096;
+  const topology = opts.topology ?? readFleetTopology();
+  const wantPort = fleetPort(topology);
   const wantBinary = FLEET_GUARD_INSTALL;
   // Empty binary = vendored default → on a fleet client this would spawn a fork, so flag it.
   if (!configuredBinary || configuredBinary.trim() === "") {
@@ -111,7 +124,7 @@ export function checkFleetSettings(
 /** Tunnel plist check: ServerAliveInterval 15, CountMax 2, TCPKeepAlive yes, correct port forward. */
 export function checkFleetTunnel(
   plistContent: string | null,
-  opts: { platform?: string; fleetConfig?: FleetConfig | null } = {},
+  opts: { platform?: string; topology?: FleetTopologyState } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet tunnel", ok: true, detail: "skipped (not darwin)" };
@@ -124,8 +137,8 @@ export function checkFleetTunnel(
       fix: "bash tools/fleet/install.sh  (installs tunnel plist)",
     };
   }
-  const cfg = opts.fleetConfig ?? readFleetConfig();
-  const port = cfg?.canonical?.port ?? 4096;
+  const topology = opts.topology ?? readFleetTopology();
+  const port = fleetPort(topology);
   const portForward = `127.0.0.1:${port}:127.0.0.1:${port}`;
 
   const issues: string[] = [];
@@ -151,29 +164,58 @@ export function checkFleetTunnel(
   return { name: "Fleet tunnel", ok: true, detail: `ServerAlive 15/2 + TCPKeepAlive, ${port} forward` };
 }
 
-/** Fleet role check — surfaces the current mode. */
+/** Fleet role check — surfaces the current mode from the projection topology.
+ *  Every state renders honestly (#1106): ok → the role + canonical target +
+ *  the D1 freshness verdict when present; absent → the base-default
+ *  standalone WITH the refresh pointer; broken → a rendered fail carrying
+ *  the reader's rejection + the refresh fix. */
 export function checkFleetRole(
-  opts: { read?: (p: string) => string; platform?: string } = {},
+  opts: { topology?: FleetTopologyState; platform?: string } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet role", ok: true, detail: "skipped (not darwin)" };
   }
-  const cfg = readFleetConfig(undefined, opts.read);
-  const role = cfg?.role ?? "standalone";
+  const topology = opts.topology ?? readFleetTopology();
+
+  if (topology.kind === "absent") {
+    return {
+      name: "Fleet role",
+      ok: true,
+      detail: `standalone (no fleet projection — base default; ${topology.detail})`,
+    };
+  }
+  if (topology.kind === "broken") {
+    return {
+      name: "Fleet role",
+      ok: false,
+      detail: topology.detail,
+      fix: "refresh the projection: `amico fleet status --projection` (the CLI is the only door)",
+    };
+  }
+  const role = topology.role;
+  const freshness = topology.verdict === undefined
+    ? ""
+    : ` — freshness: ${topology.verdict}${topology.advisory === undefined ? "" : ` (${topology.advisory})`}`;
   if (role === "standalone") {
-    return { name: "Fleet role", ok: true, detail: "standalone (local server, no fleet)" };
+    return { name: "Fleet role", ok: true, detail: `standalone (local server, no fleet)${freshness}` };
   }
   if (role === "server") {
-    return { name: "Fleet role", ok: true, detail: `server (canonical for fleet, host: ${cfg?.canonical?.host ?? "unknown"})` };
+    return { name: "Fleet role", ok: true, detail: `server (canonical for fleet, host: ${topology.canonical?.host ?? "unknown"})${freshness}` };
   }
   if (role === "client") {
-    return { name: "Fleet role", ok: true, detail: `client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096} via ${cfg?.canonical?.sshAlias ?? "ssh"}` };
+    return {
+      name: "Fleet role",
+      ok: true,
+      detail: `client → ${topology.canonical?.host ?? "unknown"}:${topology.canonical?.port ?? 4096} via ${topology.canonical?.sshAlias ?? "ssh"}${freshness}`,
+    };
   }
-  return { name: "Fleet role", ok: false, detail: `unknown role: ${role}`, fix: "check ~/.amico/ops/fleet/fleet.json" };
+  return { name: "Fleet role", ok: false, detail: `unknown role: ${role}`, fix: "refresh the projection: `amico fleet status --projection`" };
 }
 
 /** Aggregate helper — returns all fleet checks (role + guard + settings + tunnel).
- *  When role is standalone, guard/settings/tunnel checks are skipped (not relevant). */
+ *  When role is standalone (or the projection is absent — the same base
+ *  default), guard/settings/tunnel checks are skipped (not relevant); a
+ *  broken projection surfaces ONLY the role check's rendered fail. */
 export function fleetHealthReport(args: {
   repoGuardPath: string;
   installedGuardPath?: string;
@@ -183,21 +225,25 @@ export function fleetHealthReport(args: {
   read?: (p: string) => string;
   isExecutable?: (p: string) => boolean;
   platform?: string;
+  /** #1106: the projection topology state (injectable; default: readFleetTopology()). */
+  topology?: FleetTopologyState;
 }): FleetCheck[] {
-  const cfg = readFleetConfig(undefined, args.read);
-  const role = cfg?.role ?? "standalone";
+  const topology = args.topology ?? readFleetTopology();
+  const role = topology.kind === "ok" ? topology.role : "standalone";
 
-  // Standalone: fleet checks are irrelevant — just surface the role.
-  if (role === "standalone" && (args.platform ?? process.platform) === "darwin") {
+  // Standalone (or absent projection — the base default): fleet checks are
+  // irrelevant — just surface the role. A BROKEN projection also returns only
+  // the role check, as its rendered fail.
+  if ((role === "standalone" || topology.kind !== "ok") && (args.platform ?? process.platform) === "darwin") {
     return [
-      checkFleetRole({ read: args.read, platform: args.platform }),
+      checkFleetRole({ topology, platform: args.platform }),
     ];
   }
 
   return [
-    checkFleetRole({ read: args.read, platform: args.platform }),
+    checkFleetRole({ topology, platform: args.platform }),
     checkFleetGuard(args.repoGuardPath, args.installedGuardPath, { read: args.read, isExecutable: args.isExecutable, platform: args.platform }),
-    checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform, fleetConfig: cfg }),
-    checkFleetTunnel(args.plistContent, { platform: args.platform, fleetConfig: cfg }),
+    checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform, topology }),
+    checkFleetTunnel(args.plistContent, { platform: args.platform, topology }),
   ];
 }

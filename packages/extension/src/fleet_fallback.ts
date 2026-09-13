@@ -1,14 +1,28 @@
-// Fleet configuration — the single source of truth for fleet role and topology.
-// Config file: ~/.amico/ops/fleet/fleet.json
+// Fleet configuration — the WRITER for the raw fleet.json (#1106, fleet
+// rearchitect P3b-2, spec spec-20260913-114814 row 1).
+//
+// On-disk file: ~/.amico/ops/fleet/fleet.json
 //   { "role": "standalone"|"server"|"client", "canonical": { "host": "...", "port": 4096, "sshAlias": "..." } }
-// No file = standalone (safe zero-config default).
+//   No file = standalone (safe zero-config default).
 //
-// "Go Standalone" (CONTEXT.md): the user-invoked mode switch from client to standalone.
-// The machine leaves the fleet and serves itself permanently. Not an escape hatch —
-// a first-class choice. Re-enrollment (joining a fleet) is a separate flow.
+// As of #1106 this module is a WRITER, never a parser: amicissimo's fleet
+// authority owns the ONE parser for this file (behind the `amico fleet` CLI),
+// and every amicode-side READ goes through the verb-refreshed projection cache
+// (~/.amico/ops/fleet/projection.json) via fleet_topology.ts + @amicode/
+// schema's reader. The write side stays exactly where it was because the mode
+// flows (Go Standalone, legacy migration) mutate the machine-local membership
+// record the ONE parser reads — the on-disk shape below is the parser's
+// contract and must round-trip byte-for-parseable.
 //
-// Legacy: the old fallback.json marker is migrated to fleet.json on first read.
-// (harmoniqs/amicode#338)
+// "Go Standalone" (CONTEXT.md): the user-invoked mode switch from client to
+// standalone. The machine leaves the fleet and serves itself permanently. Not
+// an escape hatch — a first-class choice. Re-enrollment (joining a fleet) is a
+// separate flow. Every writer here is followed at the CALL-SITE by a
+// projection-cache refresh through the verb (`amico fleet status
+// --projection`), so the consumers' cache stays coherent with the raw file.
+//
+// Legacy: the old fallback.json marker is migrated to fleet.json on activation
+// (harmoniqs/amicode#338).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -31,32 +45,6 @@ export interface FleetConfig {
   previousPort?: number;
 }
 
-/** Read fleet config from disk. No file = null (treated as standalone by callers). */
-export function readFleetConfig(
-  p: string = FLEET_CONFIG_PATH,
-  read: (path: string) => string = (pp) => fs.readFileSync(pp, "utf8"),
-): FleetConfig | null {
-  try {
-    const raw = read(p);
-    const j = JSON.parse(raw) as FleetConfig;
-    if (j && typeof j.role === "string") return j;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Get the effective fleet role. No config = standalone. */
-export function getFleetRole(p: string = FLEET_CONFIG_PATH, read?: (path: string) => string): "standalone" | "server" | "client" {
-  const cfg = readFleetConfig(p, read);
-  return cfg?.role ?? "standalone";
-}
-
-/** Is this machine a fleet client? (role = "client" in fleet.json) */
-export function isFleetClient(p: string = FLEET_CONFIG_PATH, read?: (path: string) => string): boolean {
-  return getFleetRole(p, read) === "client";
-}
-
 /** Write fleet config atomically (tmp + rename). */
 export function writeFleetConfig(config: FleetConfig, p: string = FLEET_CONFIG_PATH): void {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -66,8 +54,9 @@ export function writeFleetConfig(config: FleetConfig, p: string = FLEET_CONFIG_P
 }
 
 /** Go Standalone: write role=standalone to fleet.json. Preserves previous settings for
- *  potential re-enrollment. Removes legacy fallback.json if present. */
-export function goStandalone(opts: { previousBinary?: string; previousPort?: number; path?: string } = {}): FleetConfig {
+ *  potential re-enrollment. Removes legacy fallback.json if present. Paths
+ *  injectable for tests. */
+export function goStandalone(opts: { previousBinary?: string; previousPort?: number; path?: string; legacyPath?: string } = {}): FleetConfig {
   const p = opts.path ?? FLEET_CONFIG_PATH;
   const config: FleetConfig = {
     role: "standalone",
@@ -76,7 +65,7 @@ export function goStandalone(opts: { previousBinary?: string; previousPort?: num
   };
   writeFleetConfig(config, p);
   // Remove legacy fallback.json if present
-  try { fs.unlinkSync(LEGACY_FALLBACK_PATH); } catch {}
+  try { fs.unlinkSync(opts.legacyPath ?? LEGACY_FALLBACK_PATH); } catch {}
   return config;
 }
 
@@ -91,26 +80,19 @@ export function removeFleetConfig(p: string = FLEET_CONFIG_PATH): void {
   } catch {}
 }
 
-/** Get the canonical server port from fleet config (default 4096). */
-export function getCanonicalPort(p: string = FLEET_CONFIG_PATH, read?: (path: string) => string): number {
-  const cfg = readFleetConfig(p, read);
-  return cfg?.canonical?.port ?? 4096;
-}
-
 // ── Legacy compatibility ────────────────────────────────────────────────────
 // The old fallback.json marker is treated as role=standalone for the guard.
-// Extension code that formerly called isFallbackActive now calls isFleetClient
-// (inverted logic: old fallback=active meant "allow spawn"; new client=true
-// means "refuse spawn"). This section provides the migration bridge.
+// Extension code that formerly called isFallbackActive now reads the
+// projection topology via fleet_topology.ts; this section is only the
+// one-time marker migration (an existence probe + a write — never a parse).
 
 /** Migrate legacy fallback.json → fleet.json if fallback.json exists but fleet.json doesn't.
- *  Called once at extension activation. */
-export function migrateLegacyFallback(): void {
-  if (fs.existsSync(LEGACY_FALLBACK_PATH) && !fs.existsSync(FLEET_CONFIG_PATH)) {
+ *  Called once at extension activation. Paths injectable for tests. */
+export function migrateLegacyFallback(opts: { legacyPath?: string; configPath?: string } = {}): void {
+  const legacyPath = opts.legacyPath ?? LEGACY_FALLBACK_PATH;
+  const configPath = opts.configPath ?? FLEET_CONFIG_PATH;
+  if (fs.existsSync(legacyPath) && !fs.existsSync(configPath)) {
     // Legacy fallback was active = the machine was in standalone mode
-    goStandalone();
+    goStandalone({ path: configPath, legacyPath });
   }
 }
-
-// Re-export the config path for fleet_health.ts and other consumers
-export { FLEET_CONFIG_PATH as FALLBACK_PATH }; // backward compat for any remaining import

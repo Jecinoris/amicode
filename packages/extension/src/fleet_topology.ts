@@ -6,10 +6,10 @@
 // the stable convention path, refreshed by `amico fleet status --projection`),
 // read through @amicode/schema's fleet_projection reader VERBATIM — contract
 // validation, base-default discipline, and D1 epoch-bound freshness all come
-// from the reader. This module NEVER parses the raw `fleet.json` — amicissimo
-// parses and publishes, amicode consumes (the spec's ONE-parser countermeasure;
-// the raw file stays writable by the mode-machine flows in fleet_fallback.ts,
-// which is a writer, never a parser).
+// from the reader. This module NEVER parses the machine-local fleet config
+// file — amicissimo parses and publishes, amicode consumes (the spec's
+// ONE-parser countermeasure; that file stays writable by the mode flows in
+// fleet_fallback.ts, which is a writer, never a parser).
 //
 // Absent / broken projections are RENDERED STATES, not error dumps and never a
 // silent fallthrough to raw-file reading: `absent` carries the refresh pointer,
@@ -238,6 +238,42 @@ function defaultRunVerb(): VerbRunResult {
     return { code: -1, stdout: r.stdout ?? "", stderr: `${code ?? "error"}: ${r.error.message}` };
   }
   return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** A verb runner with extra PATH entries (the extension host's `amico` may
+ *  not be on the ambient PATH — the amico-run launcher dir is prepended the
+ *  same way the server spawn's PATH is, so an enrolled machine never gets
+ *  misrouted to the CLI-absent branch). */
+export function verbRunnerWithPaths(extraPaths: string[], timeoutMs = 30_000): () => VerbRunResult {
+  return () => {
+    const env = { ...process.env };
+    const base = env.PATH ?? "";
+    env.PATH = [...extraPaths, base].filter((p) => p !== "").join(":");
+    const r = spawnSync("amico", ["fleet", "status", "--projection"], { env, encoding: "utf8", timeout: timeoutMs });
+    if (r.error) {
+      const code = (r.error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return { code: null, stdout: "", stderr: "ENOENT" };
+      return { code: -1, stdout: r.stdout ?? "", stderr: `${code ?? "error"}: ${r.error.message}` };
+    }
+    return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
+}
+
+/** The ok state as the `FleetConfig` shape the hub flows consume
+ *  (hub_ops.resolveHubTarget) — the topology section's value verbatim; every
+ *  non-ok state is null (the caller renders, never a silent default). An
+ *  out-of-vocabulary role is surfaced elsewhere and returns null here — it is
+ *  never silently remapped into the closed role vocabulary. */
+export function fleetConfigOf(state: FleetTopologyState): import("./fleet_fallback").FleetConfig | null {
+  if (state.kind !== "ok") return null;
+  const role = state.role;
+  if (role !== "standalone" && role !== "server" && role !== "client") return null;
+  return {
+    role,
+    ...(state.canonical === undefined ? {} : { canonical: state.canonical }),
+    ...(state.previousBinary === undefined ? {} : { previousBinary: state.previousBinary }),
+    ...(state.previousPort === undefined ? {} : { previousPort: state.previousPort }),
+  };
 }
 
 // ── internals ─────────────────────────────────────────────────────────────────
