@@ -100,6 +100,7 @@ export function parseDoctorArgs(argv: string[]): { ok: true; args: DoctorArgs } 
     "--root-repo-amicode": "rootRepoAmicode",
     "--root-repo-fork": "rootRepoFork",
     "--root-staging": "rootStaging",
+    "--upstream-version": "upstreamVersion" as keyof SurfaceContext,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

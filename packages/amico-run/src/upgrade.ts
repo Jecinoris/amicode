@@ -219,6 +219,7 @@ const ROOT_FLAGS: Record<string, keyof SurfaceContext> = {
   "--root-repo-amicode": "rootRepoAmicode",
   "--root-repo-fork": "rootRepoFork",
   "--root-staging": "rootStaging",
+  "--upstream-version": "upstreamVersion" as keyof SurfaceContext,
 };
 
 interface ParsedVerbArgs {
@@ -941,8 +942,7 @@ async function rebuildVerbRouterDists(
 const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
   runVerb("server-binary", argv, ["server-binary"], async (ctx): Promise<VerbBodyResult> => {
     const rootServer = ctx.roots.rootServer!;
-    const rootRepoFork = ctx.roots.rootRepoFork!;
-    const ref = ctx.args.flags["--ref"] ?? "origin/local/amicode";
+    const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
     const skipBuild = ctx.args.flags["--skip-build"];
     const noKick = ctx.args.bools.has("--no-kick");
     const kickCommand =
@@ -958,16 +958,16 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
     const prevBin = `${frozen}.prev`;
     const digests: Record<string, string | null> = {};
 
-    // (1) environment preflight — bun + node present, fork checkout exists.
+    // (1) environment preflight — the amicode repo checkout must exist.
     // The bun check is the BUILD path's requirement; --skip-build freezes an
     // existing artifact and never needs it.
     try {
-      await stat(rootRepoFork);
+      await stat(rootRepoAmicode);
     } catch {
-      ctx.log(`fork checkout not found: ${rootRepoFork}`);
+      ctx.log(`amicode repo not found: ${rootRepoAmicode}`);
       return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: digests };
     }
-    ctx.log(`environment: node ${process.versions.node}, fork ${rootRepoFork}`);
+    ctx.log(`environment: node ${process.versions.node}, amicode ${rootRepoAmicode}`);
     if (!skipBuild) {
       const bun = await runShell("bun --version");
       if (bun.code !== 0) {
@@ -977,51 +977,52 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
       ctx.log(`environment: bun ${bun.stdout.trim()}`);
     }
 
-    // (2) fork state: fetch, clean tree, HEAD ancestor of the ref. Dirt or
-    // divergence → aborted-diverged (never reset, never merge — the human
-    // resolves). Clean-but-behind → ff-only to the ref (a fast-forward of a
-    // clean tree is not a merge).
-    const fetch = await runGit(rootRepoFork, ["fetch", "origin"]);
+    // (2) amicode repo state: fetch, clean tree, HEAD ancestor of origin/main.
+    // Dirt or divergence → aborted-diverged (never reset, never merge — the
+    // human resolves). Clean-but-behind → ff-only (a fast-forward of a clean
+    // tree is not a merge).
+    const fetch = await runGit(rootRepoAmicode, ["fetch", "origin"]);
     if (fetch.code !== 0) {
-      ctx.log(`fork fetch failed: ${firstLine(fetch.stderr)}`);
+      ctx.log(`amicode fetch failed: ${firstLine(fetch.stderr)}`);
       return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: digests };
     }
-    const headBefore = (await runGit(rootRepoFork, ["rev-parse", "HEAD"])).stdout.trim();
-    digests.fork_head_before = headBefore;
-    const status = await runGit(rootRepoFork, ["status", "--porcelain"]);
+    const headBefore = (await runGit(rootRepoAmicode, ["rev-parse", "HEAD"])).stdout.trim();
+    digests.amicode_head_before = headBefore;
+    const status = await runGit(rootRepoAmicode, ["status", "--porcelain"]);
     if (status.code !== 0 || status.stdout.trim().length > 0) {
       ctx.log(
         status.code !== 0
           ? `git status failed: ${firstLine(status.stderr)}`
-          : `fork tree dirty (never reset, never merge — the human resolves):\n${status.stdout.trim()}`,
+          : `amicode tree dirty (never reset, never merge — the human resolves):\n${status.stdout.trim()}`,
       );
       return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
     }
-    const refSha = (await runGit(rootRepoFork, ["rev-parse", "--verify", ref])).stdout.trim();
+    const ref = ctx.args.flags["--ref"] ?? "origin/main";
+    const refSha = (await runGit(rootRepoAmicode, ["rev-parse", "--verify", ref])).stdout.trim();
     if (!refSha) {
-      ctx.log(`ref ${ref} not found in the fork after fetch`);
+      ctx.log(`ref ${ref} not found in the amicode repo after fetch`);
       return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: digests };
     }
-    digests.fork_head_at_ref = refSha;
-    const ancestor = await runGit(rootRepoFork, ["merge-base", "--is-ancestor", "HEAD", ref]);
+    digests.amicode_head_at_ref = refSha;
+    const ancestor = await runGit(rootRepoAmicode, ["merge-base", "--is-ancestor", "HEAD", ref]);
     if (ancestor.code !== 0) {
-      ctx.log(`fork HEAD ${headBefore.slice(0, 12)} is NOT an ancestor of ${ref} ${refSha.slice(0, 12)} — diverged; the human resolves`);
+      ctx.log(`amicode HEAD ${headBefore.slice(0, 12)} is NOT an ancestor of ${ref} ${refSha.slice(0, 12)} — diverged; the human resolves`);
       return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
     }
     if (headBefore !== refSha) {
-      ctx.log(`fork clean-but-behind: fast-forwarding ${headBefore.slice(0, 12)} → ${refSha.slice(0, 12)} (ff-only)`);
-      const ff = await runGit(rootRepoFork, ["merge", "--ff-only", ref]);
+      ctx.log(`amicode clean-but-behind: fast-forwarding ${headBefore.slice(0, 12)} → ${refSha.slice(0, 12)} (ff-only)`);
+      const ff = await runGit(rootRepoAmicode, ["merge", "--ff-only", ref]);
       if (ff.code !== 0) {
         ctx.log(`ff-only fast-forward failed: ${firstLine(ff.stderr)}`);
         return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
       }
     }
-    const headAfter = (await runGit(rootRepoFork, ["rev-parse", "HEAD"])).stdout.trim();
-    digests.fork_head_after = headAfter;
+    const headAfter = (await runGit(rootRepoAmicode, ["rev-parse", "HEAD"])).stdout.trim();
+    digests.amicode_head_after = headAfter;
     digests.ref = ref;
 
-    // (3+4) bun install + build --single (the LIVE path; --skip-build freezes
-    // an existing artifact — the fixture path)
+    // (3+4) build:binary from the overlay tree (the LIVE path); --skip-build
+    // freezes an existing artifact — the fixture/quick path
     let artifact: string;
     if (skipBuild !== undefined) {
       artifact = skipBuild;
@@ -1032,18 +1033,17 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
         return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: digests };
       }
     } else {
-      const inst = await runShell("bun install", { cwd: rootRepoFork, timeoutMs: 600_000 });
-      if (inst.code !== 0) {
-        ctx.log(`bun install failed (exit ${inst.code}): ${firstLine(inst.stderr || inst.stdout)}`);
-        return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
-      }
-      const pkgDir = join(rootRepoFork, "packages", "opencode");
-      const build = await runShell("bun run build --single", { cwd: pkgDir, timeoutMs: 1_800_000 });
+      // Build from the overlay tree: materialize + bun compile via build:binary
+      const buildCmd = ctx.args.flags["--dist-build-command"]
+        ? ctx.args.flags["--dist-build-command"]
+        : `pnpm --filter amicode run build:binary`;
+      ctx.log(`building binary from overlay: ${buildCmd} (cwd ${rootRepoAmicode})`);
+      const build = await runShell(buildCmd, { cwd: rootRepoAmicode, timeoutMs: 1_800_000 });
       if (build.code !== 0) {
-        ctx.log(`build --single failed (exit ${build.code}): ${firstLine(build.stderr || build.stdout)}`);
+        ctx.log(`build:binary failed (exit ${build.code}): ${firstLine(build.stderr || build.stdout)}`);
         return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
       }
-      artifact = join(pkgDir, "dist", `opencode-${process.platform}-${process.arch}`, "bin", "opencode");
+      artifact = join(rootRepoAmicode, "packages", "extension", "vendor", "opencode", `${process.platform}-${process.arch}`, "opencode");
       try {
         await stat(artifact);
       } catch {

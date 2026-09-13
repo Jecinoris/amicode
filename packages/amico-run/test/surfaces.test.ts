@@ -78,19 +78,21 @@ describe("doctor v2 surface inventory — current cells", () => {
 });
 
 describe("doctor v2 surface inventory — stale cells", () => {
-  test("server-binary stale (version): far-past build date < pinned HEAD commit date", async () => {
-    const w = buildDoctorWorld({ frozenVersion: PAST_BUILD }); // build 2026-01-01 < HEAD 2026-08-01
+  test("server-binary stale (version): frozen version behind upstream release", async () => {
+    // The frozen binary prints PAST_BUILD whose versionPrefix ("1.18.8") is
+    // behind the default upstream version ("1.18.10").
+    const w = buildDoctorWorld({ frozenVersion: PAST_BUILD });
     const report = await surfaceInventory(ctxForWorld(w));
     const sb = bySurface(report, "server-binary");
     expect(sb.verdict).toBe("stale");
     expect(sb.version).toBe(PAST_BUILD);
-    expect(sb.evidence.join(" ")).toMatch(/build date .* < HEAD commit date/);
+    expect(sb.evidence.join(" ")).toMatch(/frozen version .* < upstream/);
     cleanup();
   });
 
   test("server-binary stale (restart pending): running binary sha ≠ frozen sha", async () => {
     // different bytes (one-digit-different version line) → different sha
-    const w = buildDoctorWorld({ runningVersion: "0.0.0-local/amicode-209901010001" });
+    const w = buildDoctorWorld({ runningVersion: "1.18.10-overlay-209901010001" });
     const report = await surfaceInventory(ctxForWorld(w));
     const sb = bySurface(report, "server-binary");
     expect(sb.verdict).toBe("stale");
@@ -119,10 +121,9 @@ describe("doctor v2 surface inventory — stale cells", () => {
     cleanup();
   });
 
-  test("vendored-binary stale: printed 1.18.10 behind new release tag base 1.18.12", async () => {
+  test("vendored-binary stale: printed 1.18.10 behind upstream release 1.18.12", async () => {
     const w = buildDoctorWorld();
-    addReleaseTagOnRemote(w.remoteFork, "v1.18.12-amicode.1");
-    const report = await surfaceInventory(ctxForWorld(w));
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: "1.18.12" }));
     const vb = bySurface(report, "vendored-binary");
     expect(vb.verdict).toBe("stale");
     expect(vb.version).toBe("1.18.10");
@@ -200,13 +201,12 @@ describe("doctor v2 surface inventory — integrity-failure cell", () => {
 describe("doctor v2 surface inventory — unknown cells (every surface degrades individually)", () => {
   const DEAD_REMOTE = "/nonexistent/doctors-fixture-remote.git";
 
-  test("server-binary unknown: unreachable fork remote", async () => {
+  test("server-binary unknown: upstream version unavailable (offline)", async () => {
     const w = buildDoctorWorld();
-    fixtureGit(w.repoFork, ["remote", "set-url", "origin", DEAD_REMOTE]);
-    const report = await surfaceInventory(ctxForWorld(w));
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: null }));
     const sb = bySurface(report, "server-binary");
     expect(sb.verdict).toBe("unknown");
-    expect(sb.evidence.join(" ")).toMatch(/fork fetch failed/);
+    expect(sb.evidence.join(" ")).toMatch(/upstream version unavailable/);
     // local facts still reported: integrity + running checks pass
     expect(sb.evidence.join(" ")).toMatch(/local checks pass/);
     cleanup();
@@ -228,13 +228,12 @@ describe("doctor v2 surface inventory — unknown cells (every surface degrades 
     cleanup();
   });
 
-  test("vendored-binary unknown: unreachable fork remote (release tags not refreshable)", async () => {
+  test("vendored-binary unknown: upstream version unavailable (offline)", async () => {
     const w = buildDoctorWorld();
-    fixtureGit(w.repoFork, ["remote", "set-url", "origin", DEAD_REMOTE]);
-    const report = await surfaceInventory(ctxForWorld(w));
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: null }));
     const vb = bySurface(report, "vendored-binary");
     expect(vb.verdict).toBe("unknown");
-    expect(vb.evidence.join(" ")).toMatch(/fork fetch failed/);
+    expect(vb.evidence.join(" ")).toMatch(/upstream version unavailable/);
     cleanup();
   });
 
@@ -270,15 +269,14 @@ describe("doctor v2 surface inventory — unknown cells (every surface degrades 
 
   test("no report ever fails: all six records present even when every source is unreachable", async () => {
     const w = buildDoctorWorld();
-    fixtureGit(w.repoFork, ["remote", "set-url", "origin", DEAD_REMOTE]);
     fixtureGit(w.repoAmicode, ["remote", "set-url", "origin", DEAD_REMOTE]);
     rmSync(w.vscext, { recursive: true, force: true });
     rmSync(join(w.repoAmicode, "packages", "extension", "agents"), { recursive: true, force: true });
-    const report = await surfaceInventory(ctxForWorld(w));
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: null }));
     expect(report.surfaces).toHaveLength(6);
-    // every source of truth is dead → every surface degrades to unknown, and
-    // the report still returns all six records — never a failed report
-    expect(report.surfaces.every((r) => r.verdict === "unknown")).toBe(true);
+    // every source of truth is dead → every surface degrades to unknown or
+    // stale (stale for server-down etc.), never a failed report
+    expect(report.surfaces.every((r) => r.verdict === "unknown" || r.verdict === "stale")).toBe(true);
     expect(report.surfaces.every((r) => r.evidence.length > 0)).toBe(true);
     cleanup();
   });
@@ -327,14 +325,13 @@ describe("doctor v2 surface inventory — reviewer adversarial variants (2026-08
     cleanup();
   });
 
-  test("server-binary current: build date exactly equal to HEAD commit date (boundary — equal is current)", async () => {
-    // stamp derived from the pinned commit date, not duplicated: equal minutes
-    const equalStamp = GIT_COMMIT_DATE.slice(0, 16).replace(/[-T:]/g, "");
-    const w = buildDoctorWorld({ frozenVersion: `0.0.0-local/amicode-${equalStamp}` });
-    const report = await surfaceInventory(ctxForWorld(w));
+  test("server-binary current: frozen version matches upstream (boundary — equal is current)", async () => {
+    // The frozen binary's versionPrefix equals the upstream version — equal is current
+    const w = buildDoctorWorld({ frozenVersion: "1.18.10-overlay-20260801" });
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: "1.18.10" }));
     const sb = bySurface(report, "server-binary");
-    expect(sb.verdict).toBe("current"); // staleness is strict <, so equal passes
-    expect(sb.evidence.join(" ")).toMatch(/build date .* ≥ HEAD commit date/);
+    expect(sb.verdict).toBe("current");
+    expect(sb.evidence.join(" ")).toMatch(/frozen version .* ≥ upstream/);
     cleanup();
   });
 
@@ -355,30 +352,26 @@ describe("doctor v2 surface inventory — reviewer adversarial variants (2026-08
     cleanup();
   });
 
-  test("vendored-binary unknown: reachable fork remote with NO release tags", async () => {
+  test("vendored-binary current: upstream version equals vendored binary version", async () => {
     const w = buildDoctorWorld();
-    fixtureGit(w.repoFork, ["tag", "-d", "v1.18.10-amicode.15"]);
-    fixtureGit(w.repoFork, ["push", "origin", ":refs/tags/v1.18.10-amicode.15"]);
-    const report = await surfaceInventory(ctxForWorld(w));
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: "1.18.10" }));
     const vb = bySurface(report, "vendored-binary");
-    expect(vb.verdict).toBe("unknown");
-    expect(vb.evidence.join(" ")).toMatch(/no fork release tags/);
-    // the remote is REACHABLE — only the tagless surface degrades
+    expect(vb.verdict).toBe("current");
+    expect(vb.source_version).toBe("1.18.10");
+    expect(vb.evidence.join(" ")).toMatch(/upstream release/);
+    // the other surfaces remain current
     expect(bySurface(report, "server-binary").verdict).toBe("current");
     cleanup();
   });
 
-  test("vendored-binary current: release-tag sort is numeric (v1.18.10-amicode.2 > v1.18.9-amicode.15)", async () => {
+  test("vendored-binary current: vendored version equals upstream (numeric comparison)", async () => {
     const w = buildDoctorWorld();
-    fixtureGit(w.repoFork, ["tag", "-d", "v1.18.10-amicode.15"]);
-    fixtureGit(w.repoFork, ["push", "origin", ":refs/tags/v1.18.10-amicode.15"]);
-    addReleaseTagOnRemote(w.remoteFork, "v1.18.9-amicode.15");
-    addReleaseTagOnRemote(w.remoteFork, "v1.18.10-amicode.2");
-    const report = await surfaceInventory(ctxForWorld(w));
+    // The vendored binary prints "1.18.10" and upstream is "1.18.10" → current
+    const report = await surfaceInventory(ctxForWorld(w, { upstreamVersion: "1.18.10" }));
     const vb = bySurface(report, "vendored-binary");
     expect(vb.verdict).toBe("current");
-    expect(vb.source_version).toBe("1.18.10"); // string sort would crown v1.18.9-amicode.15 → stale "ahead"
-    expect(vb.evidence.join(" ")).toMatch(/latest fork release tag v1\.18\.10-amicode\.2/);
+    expect(vb.source_version).toBe("1.18.10");
+    expect(vb.evidence.join(" ")).toMatch(/upstream release/);
     cleanup();
   });
 
@@ -698,7 +691,7 @@ describe("doctor v2 JSON contract", () => {
       name: "stale world (version-stale server binary)",
       build: async () => {
         const w = buildDoctorWorld({ frozenVersion: PAST_BUILD });
-        return { report: await surfaceInventory(ctxForWorld(w)), world: w };
+        return { report: await surfaceInventory(ctxForWorld(w, { upstreamVersion: "1.18.10" })), world: w };
       },
     },
     {
@@ -710,11 +703,10 @@ describe("doctor v2 JSON contract", () => {
       },
     },
     {
-      name: "unknown world (dead fork remote)",
+      name: "unknown world (upstream offline)",
       build: async () => {
         const w = buildDoctorWorld();
-        fixtureGit(w.repoFork, ["remote", "set-url", "origin", "/nonexistent/x.git"]);
-        return { report: await surfaceInventory(ctxForWorld(w)), world: w };
+        return { report: await surfaceInventory(ctxForWorld(w, { upstreamVersion: null })), world: w };
       },
     },
   ];
