@@ -144,7 +144,7 @@ Once the design is approved, **produce → route → draft → publish** a singl
 | amico tooling / architecture (a skill, agent, the workflow) | **GitHub issue** first — the issue is the task — paired with a **repo ADR** (`docs/adr/`) + `CONTEXT.md` as its durable record |
 | No compounding why (a chore, localized fix) | **GitHub issue** first — the issue is the whole record; a vault spec is usually wasted on it |
 
-**Offer the GitHub-issue option only when `write-an-issue` is in the session's skill index.** `write-an-issue` ships `surface: internal`, so a checkout-less install (public bundle only) does not have it: there the terminus is the vault spec/plan — say so, skip the ask, and never invoke a skill that isn't staged.
+**Offer the GitHub-issue option only when `write-an-issue` is in the session's skill index.** Its frontmatter ships `surface: public`, so most installs stage it — but the skill index, not the surface tag, is the staging truth: where the index does not carry it, the terminus is the vault spec/plan — say so, skip the ask, and never invoke a skill that isn't staged.
 
 The user's choice is sovereign: a vault spec/plan is a legitimate terminus even when the issue route exists, and an issue for compounding research is their call. When the issue terminus pairs with a durable record (ADR or spec), **link** to it rather than duplicating it.
 
@@ -202,7 +202,7 @@ was manual. A manual review is a weaker claim and must read as one.
 
 On approval: commit (and push) the vault spec/plan / ADR / `CONTEXT.md`. **Issue terminus only** — invoke `write-an-issue` → `gh issue create` (it is in the session's skill index, or this route was never offered). Add the **bidirectional link** (issue `## Source` ↔ durable record) whenever both exist. **Nothing outward-facing is created before approval.** If the user requests changes, revise and re-run the review loop.
 
-**6. Decompose (if warranted).** If the terminus is a published issue, the design needs multiple vertical slices, **and `break-into-subissues` is in the session's skill index** (it ships `surface: internal`), invoke it on the parent issue to produce **TDD-ready sub-issues**. A single small issue needs no decomposition; a vault-terminus design tracks its slices in the spec/plan body.
+**6. Decompose (if warranted).** If the terminus is a published issue, the design needs multiple vertical slices, **and `break-into-subissues` is in the session's skill index**, invoke it on the parent issue to produce **TDD-ready sub-issues**. A single small issue needs no decomposition; a vault-terminus design tracks its slices in the spec/plan body.
 
 **The terminus ends here — at the published design-of-record (plus its sub-issues, if decomposed).** Implementation happens when the work is picked up — a human, or, where the checkout stages them, the `/implement-issue` path (`/develop` for an issue-DAG).
 

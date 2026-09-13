@@ -1,6 +1,6 @@
 ---
 name: hypothesis-review
-description: Rank open hypotheses by testability and impact. Invoked from researcher Step 0 to prioritize hypothesis-driven experiments.
+description: Rank open hypotheses by testability and impact. Use when a research campaign needs to prioritize which hypothesis-driven experiment to run next.
 agents: [researcher]
 surface: public
 project_contract:
