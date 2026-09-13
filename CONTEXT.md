@@ -43,6 +43,10 @@ _Avoid_: workspace, shared folder, template
 One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
 _Avoid_: Chat (as a concept name), conversation
 
+**Session Lineage**:
+The rooted set formed by one Session and every Session it explicitly spawns through a registered task or session-spawn edge. A root Session may aggregate its descendants' Mutation Receipts in Files Changed, but each receipt retains its originating Session. A fork starts a separate Session Lineage.
+_Avoid_: session tree (too structural), parent chat, fork lineage
+
 **Bug session**:
 A single-purpose Session spawned by the Report-a-Bug entry point. Bound to the active Project like any Session, but machine-managed: archived once its report is filed, deleted if abandoned before filing, and kept out of the Project's session history in every state.
 _Avoid_: chat, side chat, ticket
@@ -93,6 +97,30 @@ The typed set of gates + phase templates an autonomous mode binds — the entire
 **Mode**:
 One of the three director postures — copilot (the zeroth: default, interactive, packless), research, develop. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
 _Avoid_: surface, rail (they render and switch modes; a mode is a posture, not a surface)
+
+**Mutation Context**:
+A short-lived, server-issued capability that binds a declared local mutation to an authenticated initiating panel and Session Lineage, origin, exact operation, canonical authorized resources, and evidence policy. Known local mutators require a valid Mutation Context before changing session-visible storage; an invalid context denies before filesystem access, while an exact idempotent retry returns the prior operation result. It is server or extension-host local and never part of a browser, transcript, share, telemetry, log, or error payload.
+_Avoid_: write token, filesystem permission
+
+**Mutation Ledger**:
+The server-owned, append-only compact record of Mutation Receipts for a Session Lineage. It is the ownership authority behind Files Changed; filesystem snapshots and watchers may revalidate a receipt but never create one. Ledger storage, evidence retention, and compaction are operational infrastructure, not ledger resources.
+_Avoid_: change log, Git status, filesystem journal
+
+**Mutation Receipt**:
+One immutable record for one resource affected by a requested operation. It records the originating Session, origin, logical and canonical resource identity, operation, execution outcome, timing, and safe evidence reference. Current observation confidence, net state, and evidence availability live in a separate Mutation Assessment so revalidation never rewrites history.
+_Avoid_: diff (a diff is one possible evidence form), event (too broad)
+
+**Unknown Mutation Receipt**:
+An operation-level record for an opaque action whose affected resources cannot be declared. It has no resource identity or patch evidence, is rendered in Files Changed as an explicit uncertainty item, and contributes to coverage counts without authorizing a local write.
+_Avoid_: unknown file, inferred diff
+
+**Mutation Assessment**:
+The current or append-only assessment attached to a Mutation Receipt. It records observation confidence, net state, evidence availability, revision, and expiry without changing the original receipt.
+_Avoid_: receipt status, mutable receipt
+
+**Mutation Evidence**:
+The bounded host-local patch, preimage, or structured metadata a Mutation Receipt may reference. Evidence is distinct from the compact Mutation Ledger, follows explicit redaction and retention policy, and never enters ordinary session sharing by default. Root quotas, pagination, retention, and compaction bound both receipt metadata and evidence.
+_Avoid_: ledger blob, session attachment
 
 ### Fleet & serving
 
