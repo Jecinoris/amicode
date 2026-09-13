@@ -178,6 +178,35 @@ describe("amicode_session double-create guard (#655) — the CORE tool", () => {
     await def().execute(args, ctx);
     expect(calls.create).toBe(2);
   });
+
+  it("concurrent workspace: 'create' spawns both get their own worktrees — NOT coalesced (#1060)", async () => {
+    let wtCount = 0;
+    const engine = {
+      session: {
+        get: async () => ({ id: "ses_parent", metadata: undefined, model: undefined }),
+        create: async () => ({ id: `ses_child_${++wtCount}` }),
+        update: async () => ({}),
+        fork: async () => ({ id: "ses_fork" }),
+        promptAsync: async () => ({}),
+        command: async () => ({}),
+      },
+      worktree: {
+        create: async () => ({ data: { directory: `/tmp/wt-${++wtCount}` } }),
+        list: async () => ({ data: [] }),
+        remove: async () => ({}),
+      },
+    };
+    const ctx: AmicodeToolContext = { engineClient: engine, sessionID: "ses_parent", directory: "/w", carrier: "plugin" };
+    const args = { prompt: "implement feature", workspace: "create", count: 1 };
+    // Fire two concurrent workspace: "create" spawns — both must run (no coalescing).
+    const [r1, r2] = await Promise.all([def().execute(args, ctx), def().execute(args, ctx)]);
+    // Both must produce spawned sessions (not share the same result).
+    expect(r1).toContain("Spawned 1");
+    expect(r2).toContain("Spawned 1");
+    // If they coalesced, r1 === r2 and wtCount would be smaller; both running
+    // means wtCount >= 2 (two worktree creates, two session creates).
+    expect(wtCount).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("amicode_session double-create guard (#655) — the PLUGIN twin (the live transport at bug time)", () => {

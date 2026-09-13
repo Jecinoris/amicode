@@ -48,6 +48,11 @@
 // construction (amico.ts prints `VerbResult.json`), exactly like the other spine verbs.
 import { FRONTIER_MODELS, ladderRungs } from "./ledger_dispatch.js";
 import { fleetDigest } from "./fleet_digest.js";
+// The fleet-authority projection status (#1068, rearchitect P3b-1): the same
+// `amico fleet status` verb, one more read path — `--projection` routes to the
+// entitlement-gated publisher invocation + the shared reader, while the
+// pinned `--session <id>` registry contract stays byte-identical.
+import { fleetProjectionStatus, type FleetProjectionDeps } from "./fleet_projection_verb.js";
 import {
   applyEvent,
   enqueueSignal,
@@ -580,19 +585,31 @@ export function fleetSweep(argv: string[]): VerbResult {
 // ── subcommand router ────────────────────────────────────────────────────────────
 const USAGE =
   "amico fleet list [--state <s>] [--root D]  |  amico fleet status --session <id>  |  " +
+  "amico fleet status --projection [--checkout D] [--config F] [--previous <p.json>]  |  " +
   'amico fleet steer --session <id> --message "<instruction>"  |  amico fleet stop --session <id> [--reason "<why>"]  |  ' +
   "amico fleet re-tier --session <id> --model <provider/id> [--variant <v>]  |  amico fleet sweep [--dry-run]  |  " +
   "amico fleet launch --session <id> --pid <n>  |  " +
   'amico fleet finish --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]  |  ' +
   "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]";
 
+/** Optional injection surface for the fleet verb's sub-verbs — the projection
+ *  status's hermetic seam (publisher subprocess, entitlement file, checkout
+ *  probe). Existing callers (amico.ts, mcp_serve.ts) pass nothing and get the
+ *  production defaults. */
+export interface FleetVerbDeps {
+  projection?: FleetProjectionDeps;
+}
+
 /** The `fleet` verb body: route on the subcommand. Backs BOTH the CLI (amico.ts) and the
  *  MCP facade (mcp_serve.ts) — one impl, two transports. */
-export function fleetVerb(argv: string[]): VerbResult {
+export function fleetVerb(argv: string[], deps: FleetVerbDeps = {}): VerbResult {
   const sub = argv[0];
   const rest = argv.slice(1);
   if (sub === "list") return fleetList(rest);
-  if (sub === "status") return fleetStatus(rest);
+  if (sub === "status") {
+    if (rest.includes("--projection")) return fleetProjectionStatus(rest, deps.projection);
+    return fleetStatus(rest);
+  }
   if (sub === "steer") return fleetSteer(rest);
   if (sub === "stop") return fleetStop(rest);
   if (sub === "re-tier") return fleetRetier(rest);

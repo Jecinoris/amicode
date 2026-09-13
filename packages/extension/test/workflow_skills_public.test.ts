@@ -10,8 +10,9 @@
 //     (entry
 //     points, loop bound to the dev pack's phases/gates, ledger discipline,
 //     honest degradation naming what is missing, handoff section with the
-//     mid-session switch marked PENDING-D5 — parameterized on D5 state per
-//     the spec: the assertion flips when slice 5 lands);
+//     mid-session switch's pending status stated honestly (F14 replaced the
+//     dangling "PENDING-D5" marker with plain text) — parameterized on D5
+//     state per the spec: the assertion flips when slice 5 lands);
 //   - `develop` cross-references `autodev` and defers to it as the mode
 //     binding;
 //   - the #809 content lens, mechanically: none of the six skills carries a
@@ -95,15 +96,17 @@ describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirr
     expect(autodev).toMatch(/research/);
   });
 
-  it("the handoff section marks the mid-session switch PENDING-D5 — parameterized: the assertion flips when slice 5 lands", () => {
+  it("the handoff section states the mid-session switch's pending status honestly — parameterized: the assertion flips when slice 5 lands", () => {
     // D5 state: the fork's mid-session posture switcher has NOT landed
-    // (slice 5, opencode#297). When it lands, this constant flips to true,
-    // the mark leaves the skill (a revision bump), and this assertion then
-    // DEMANDS the mark's absence — the parameterized flip, never a deleted test.
+    // (slice 5, opencode#297). Until it lands, the handoff section must SAY so
+    // (the F14 cleanup replaced the dangling "PENDING-D5" marker with plain
+    // honest text). When it lands, this constant flips to true, the pending
+    // text leaves the skill (a revision bump), and this assertion then
+    // DEMANDS its absence — the parameterized flip, never a deleted test.
     const D5_MID_SESSION_SWITCH_LANDED = false;
     const handoff = autodev.slice(autodev.indexOf("## Handoffs"));
-    const markPresent = handoff.includes("PENDING-D5");
-    expect(markPresent).toBe(!D5_MID_SESSION_SWITCH_LANDED);
+    const pendingHonest = /not yet specified/.test(handoff);
+    expect(pendingHonest).toBe(!D5_MID_SESSION_SWITCH_LANDED);
     // the safe path is named while pending (spawn/open on the seed), and the
     // ledger-survives claim holds either way
     expect(handoff).toMatch(/spawn|open/i);

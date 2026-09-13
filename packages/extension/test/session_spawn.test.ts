@@ -15,6 +15,7 @@ import {
   resolveModeIdSpawn,
   unwrap,
   summarizeSpawned,
+  spawnGateKey,
 } from "../opencode-plugin/session_spawn";
 import { MODE_ID_ALIASES } from "@amicode/schema";
 
@@ -32,6 +33,7 @@ describe("parseSpawnArgs", () => {
       command: null,
       mode: "fresh",
       force: false,
+      workspace: null,
     });
   });
 
@@ -131,6 +133,43 @@ describe("parseSpawnArgs", () => {
     expect(resolveModeIdSpawn("autoresearch")).toBe("research");
     expect(resolveModeIdSpawn("build")).toBe("build");
   });
+
+  // ── workspace parameter (#1060) ────────────────────────────────────────────
+  it("workspace: null → parsed as null (default)", () => {
+    const r = parseSpawnArgs({ prompt: "x", workspace: null });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.workspace).toBeNull();
+  });
+
+  it("workspace defaults to null when omitted", () => {
+    const r = parseSpawnArgs({ prompt: "x" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.workspace).toBeNull();
+  });
+
+  it('workspace: "create" → parsed as "create"', () => {
+    const r = parseSpawnArgs({ prompt: "x", workspace: "create" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.workspace).toBe("create");
+  });
+
+  it('workspace: "/some/path" → parsed as the path string', () => {
+    const r = parseSpawnArgs({ prompt: "x", workspace: "/some/path" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.workspace).toBe("/some/path");
+  });
+
+  it('workspace: "" → rejected (empty string)', () => {
+    const r = parseSpawnArgs({ prompt: "x", workspace: "" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("workspace");
+  });
+
+  it("workspace: 42 → treated as null (non-string)", () => {
+    const r = parseSpawnArgs({ prompt: "x", workspace: 42 as unknown as string });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.workspace).toBeNull();
+  });
 });
 
 describe("computeDepth", () => {
@@ -211,5 +250,39 @@ describe("summarizeSpawned", () => {
   it("says 'forked' for fork mode", () => {
     const text = summarizeSpawned([{ id: "ses_c", title: "" }], "fork");
     expect(text).toContain("forked from this session's history");
+  });
+});
+
+describe("spawnGateKey workspace semantics (#1060)", () => {
+  it('two workspace: "create" spawns get different keys (NOT coalesced — each needs its own worktree)', () => {
+    const a = parseSpawnArgs({ prompt: "x", workspace: "create" });
+    if (!a.ok) throw new Error("parse failed");
+    // Two concurrent "create" dispatches from the SAME session must NOT coalesce
+    // — each needs its own worktree. The key includes a unique token per "create".
+    const k1 = spawnGateKey("ses_a", "/w", a.args);
+    const k2 = spawnGateKey("ses_a", "/w", a.args);
+    // "create" keys should NEVER be identical (not coalesceable)
+    expect(k1).not.toBe(k2);
+  });
+
+  it("identical explicit-path spawns DO coalesce (same key)", () => {
+    const a = parseSpawnArgs({ prompt: "x", workspace: "/work/tree-1" });
+    const b = parseSpawnArgs({ prompt: "x", workspace: "/work/tree-1" });
+    if (!a.ok || !b.ok) throw new Error("parse failed");
+    expect(spawnGateKey("ses_a", "/w", a.args)).toBe(spawnGateKey("ses_a", "/w", b.args));
+  });
+
+  it("different explicit paths get different keys", () => {
+    const a = parseSpawnArgs({ prompt: "x", workspace: "/work/tree-1" });
+    const b = parseSpawnArgs({ prompt: "x", workspace: "/work/tree-2" });
+    if (!a.ok || !b.ok) throw new Error("parse failed");
+    expect(spawnGateKey("ses_a", "/w", a.args)).not.toBe(spawnGateKey("ses_a", "/w", b.args));
+  });
+
+  it("workspace: null spawns coalesce normally (existing behavior)", () => {
+    const a = parseSpawnArgs({ prompt: "x" });
+    const b = parseSpawnArgs({ prompt: "x" });
+    if (!a.ok || !b.ok) throw new Error("parse failed");
+    expect(spawnGateKey("ses_a", "/w", a.args)).toBe(spawnGateKey("ses_a", "/w", b.args));
   });
 });

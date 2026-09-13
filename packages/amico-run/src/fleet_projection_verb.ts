@@ -1,0 +1,260 @@
+// `amico fleet status --projection` (#1068, fleet rearchitect P3b-1) — the
+// fleet-AUTHORITY status: the entitlement-gated read of amicissimo's
+// published, provenance-stamped projection (spec spec-20260913-114814 §3 D1,
+// countermeasure row 1). The session-registry `status --session <id>` keeps
+// its pinned contract; `--projection` routes here.
+//
+// The three properties this module exists to enforce:
+//   1. ONE PARSER PATH. The projection is validated + rendered by
+//      @amicode/schema's fleet_projection reader (contract v1) — this verb
+//      never parses topology/health/locks itself. A stale/future/absent
+//      contract version surfaces the reader's LOUD rejection verbatim
+//      (invariant 5: one path, versioned — the hub rejects stale contract
+//      versions loudly, and so does the client read).
+//   2. THE INVOCATION SEAM. The publisher is a SUBPROCESS BOUNDARY:
+//      `python3 -m fleet_authority publish --out <path>` with cwd = the
+//      resolved amicissimo checkout (amicissimo#414, the companion entry
+//      point — possibly unmerged at the time this lands, so the seam is a
+//      typed, injectable interface; the default impl spawns exactly the
+//      pinned command line and the tests mock it with fixture projections).
+//   3. THE BOOTSTRAP EXCEPTION. Absent entitlement or absent checkout is
+//      base-standalone HONESTLY STATED with a pointer to the grant path,
+//      exiting FLEET_BOOTSTRAP_EXIT (75) — distinct from success (a silent
+//      no), from usage (64, the user's mistake), and from a stack trace
+//      (never). The mode field is untouched: stating base-standalone is a
+//      floor report, never a mode-machine write (spec invariant 7).
+//
+// Entitlement + checkout resolution follow `amico premium`'s machinery
+// precedent (src/premium.ts — PREMIUM_CODE "amicissimo", the AMICISSIMO_ROOT
+// ladder): the same codes file, the same ladder, the same funnel invariant —
+// a not-granted machine loses nothing, it is told what it is.
+import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import * as path from "node:path";
+import {
+  FleetContractVersionError,
+  freshnessAdvisory,
+  freshnessBetween,
+  readProjection,
+  renderFleetStatus,
+  type FleetProjection,
+} from "@amicode/schema";
+import { PREMIUM_CODE, readCodes } from "./premium.js";
+import type { VerbResult } from "./verbs.js";
+
+/** The bootstrap exception's exit code. 75: deliberately distinct from 0
+ *  (success — a silent no would lie), 64 (usage — this is not the user's
+ *  mistake), and 1 (an unexpected failure — this is an expected, honest
+ *  state). The P3b-2 consumers (installer, guard) branch on it. */
+export const FLEET_BOOTSTRAP_EXIT = 75;
+
+/** The subprocess boundary's typed record — what the default impl spawns and
+ *  what the tests mock. `program` + `args` is the full command line; `cwd` is
+ *  the resolved amicissimo checkout (so `-m fleet_authority` resolves against
+ *  the checkout's package); `outPath` is where the projection must land. */
+export interface PublisherInvocation {
+  program: string;
+  args: string[];
+  cwd: string;
+  outPath: string;
+}
+
+export interface PublisherResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface FleetProjectionDeps {
+  checkDir?: (p: string) => boolean;
+  readFile?: (p: string) => string | null;
+  /** THE invocation seam (injectable): the publisher subprocess call. */
+  runPublisher?: (inv: PublisherInvocation) => PublisherResult;
+}
+
+function flagValue(argv: string[], name: string): string | undefined {
+  const i = argv.indexOf(name);
+  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined;
+}
+
+/** Parse the projection-status flags: `--projection` (the routing marker,
+ *  tolerated wherever it appears), `--checkout <dir>`, `--config <file>`,
+ *  `--previous <projection.json>`. Anything else is a usage error naming the
+ *  offender — never silently ignored. */
+function parseFlags(argv: string[]): { ok: true; flags: { checkout?: string; config?: string; previous?: string } } | { ok: false; errors: string[] } {
+  const flags: { checkout?: string; config?: string; previous?: string } = {};
+  const takesValue = new Set(["--checkout", "--config", "--previous"]);
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === "--projection") continue;
+    if (tok.startsWith("--")) {
+      if (!takesValue.has(tok)) return { ok: false, errors: [`unknown flag ${tok} — the projection status accepts --checkout, --config, --previous (and the routing marker --projection)`] };
+      const v = argv[i + 1];
+      if (v === undefined) return { ok: false, errors: [`${tok} requires a value`] };
+      flags[tok.slice(2) as "checkout" | "config" | "previous"] = v;
+      i++;
+      continue;
+    }
+    return { ok: false, errors: [`unexpected positional argument ${tok}`] };
+  }
+  return { ok: true, flags };
+}
+
+/** The default publisher subprocess — THE invocation seam's production impl.
+ *  Exactly the pinned command line, nothing else: `python3 -m fleet_authority
+ *  publish --out <path>` in the checkout's cwd (the #414 entry point). */
+function defaultRunPublisher(inv: PublisherInvocation): PublisherResult {
+  const r = spawnSync(inv.program, inv.args, { cwd: inv.cwd, encoding: "utf8" });
+  return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+function fail(errors: string[], extra: Record<string, unknown> = {}): VerbResult {
+  return { json: { verb: "fleet", subcommand: "status", projection: true, ok: false, errors, ...extra }, code: 64 };
+}
+
+/** The bootstrap exception — base-standalone honestly stated, never a mode
+ *  write, never a crash, exit FLEET_BOOTSTRAP_EXIT. */
+function bootstrap(reason: "entitlement" | "checkout", rendered: string, extra: Record<string, unknown> = {}): VerbResult {
+  return {
+    json: {
+      verb: "fleet",
+      subcommand: "status",
+      projection: true,
+      ok: false,
+      bootstrap: true,
+      reason,
+      mode: "standalone",
+      rendered,
+      note: "bootstrap exception — base-standalone stated, not written: the mode field is untouched (spec invariant 7); grant the entitlement + provide the checkout to light the fleet surfaces",
+      ...extra,
+    },
+    code: FLEET_BOOTSTRAP_EXIT,
+  };
+}
+
+/** A section's carried value, with the base default applied when the section
+ *  is absent (mode absent = standalone, posture absent = ok — the projection
+ *  contract's additive-optional discipline; the base default is applied, not
+ *  invented: the reader's render states it in provenance). */
+function scalarOrBase(proj: FleetProjection, section: string, base: string): unknown {
+  const s = proj.sections?.[section];
+  return s?.value === undefined ? base : s.value;
+}
+
+/** `amico fleet status --projection` — resolve the checkout (the premium
+ *  ladder), gate on the entitlement, invoke the publisher at the subprocess
+ *  seam, read the result through the ONE fleet projection reader, and print
+ *  the provenance-rendered status summary. Backs the CLI (amico.ts) and the
+ *  MCP facade through the same fleetVerb router as the registry verbs. */
+export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps = {}): VerbResult {
+  const parsed = parseFlags(argv);
+  if (!parsed.ok) return fail(parsed.errors);
+
+  const configFile =
+    parsed.flags.config ?? path.join(homedir(), ".amico", "amicode", "entitlements.toml");
+  const checkout =
+    parsed.flags.checkout ?? process.env.AMICISSIMO_ROOT ?? path.join(homedir(), "harmoniqs", "amicissimo");
+
+  // ── the entitlement gate (the premium machinery precedent) ──
+  const codes = readCodes(configFile, { readFile: deps.readFile });
+  if (!codes.includes(PREMIUM_CODE)) {
+    const rendered = [
+      `fleet status: base-standalone (bootstrap exception) — this install does not hold the \`${PREMIUM_CODE}\` entitlement code,`,
+      "so the fleet-authority surfaces are not staged for it (the base product works fully standalone).",
+      "",
+      "Grant path: repo access to harmoniqs/amicissimo + the code in:",
+      `  ${configFile}`,
+      "",
+      "(bootstrap exception, exit 75 — distinct from success and from usage; see `amico premium`)",
+    ].join("\n");
+    return bootstrap("entitlement", rendered, { config: configFile });
+  }
+
+  // ── the checkout ladder (AMICISSIMO_ROOT → org-home default) ──
+  const existsDir =
+    deps.checkDir ?? ((p: string) => fs.existsSync(p) && fs.statSync(p).isDirectory());
+  if (!existsDir(checkout)) {
+    const rendered = [
+      `fleet status: base-standalone (bootstrap exception) — the \`${PREMIUM_CODE}\` entitlement is granted, but no amicissimo checkout is present at:`,
+      `  ${checkout}`,
+      "",
+      "Clone harmoniqs/amicissimo there, or set AMICISSIMO_ROOT, or pass --checkout <dir>.",
+      "",
+      "(bootstrap exception, exit 75 — distinct from success and from usage)",
+    ].join("\n");
+    return bootstrap("checkout", rendered, { checkout });
+  }
+
+  // ── the invocation seam: publish, then read ──
+  const outDir = mkdtempSync(path.join(tmpdir(), "fleet-projection-"));
+  try {
+    const inv: PublisherInvocation = {
+      program: "python3",
+      args: ["-m", "fleet_authority", "publish", "--out", path.join(outDir, "projection.json")],
+      cwd: checkout,
+      outPath: path.join(outDir, "projection.json"),
+    };
+    const result = deps.runPublisher ? deps.runPublisher(inv) : defaultRunPublisher(inv);
+    if (result.code !== 0) {
+      return fail(
+        [
+          `the fleet-authority publisher failed (exit ${result.code}): ${result.stderr.trim() || "(no stderr)"}`,
+          `invoked \`${inv.program} ${inv.args.join(" ")}\` in ${checkout} — the amicissimo#414 entry point (python3 -m fleet_authority) may be absent from this checkout; nothing was read or rendered`,
+        ],
+        { checkout, out_path: inv.outPath },
+      );
+    }
+
+    let previous: FleetProjection | null = null;
+    if (parsed.flags.previous !== undefined) {
+      try {
+        previous = readProjection(parsed.flags.previous);
+      } catch (e) {
+        return fail([`--previous ${parsed.flags.previous}: ${(e as Error).message}`], { checkout });
+      }
+    }
+
+    let proj: FleetProjection;
+    try {
+      proj = readProjection(inv.outPath);
+    } catch (e) {
+      // The reader's LOUD rejection surfaces verbatim — a versioned contract
+      // refuses both directions, naming both versions (invariant 5).
+      const message =
+        e instanceof FleetContractVersionError
+          ? `${e.message} (projection published to ${inv.outPath} speaks a contract this CLI does not)`
+          : `the published projection at ${inv.outPath} failed the contract read: ${(e as Error).message}`;
+      return fail([message], { checkout, out_path: inv.outPath });
+    }
+
+    const verdict = previous === null ? null : freshnessBetween(previous, proj);
+    const advisory = verdict === null ? "" : freshnessAdvisory(verdict);
+    const fresh = proj.freshness ?? {};
+    return {
+      json: {
+        verb: "fleet",
+        subcommand: "status",
+        projection: true,
+        ok: true,
+        checkout,
+        mode: scalarOrBase(proj, "mode", "standalone"),
+        posture: scalarOrBase(proj, "posture", "ok"),
+        publisher: proj.publisher ?? {},
+        sections: proj.sections ?? {},
+        freshness: {
+          counter: fresh.counter,
+          hub_epoch: fresh.hub_epoch,
+          ...(verdict === null ? {} : { verdict, advisory: advisory === "" ? undefined : advisory }),
+        },
+        summary: renderFleetStatus(proj, previous),
+        note: "read through the ONE fleet projection reader (@amicode/schema fleet_projection, contract v"
+          + String(proj.contract_version) + ") — amicissimo parses and publishes, amicode consumes (spec §3 D1); provenance renders beside the data, never merged",
+      },
+      code: 0,
+    };
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
