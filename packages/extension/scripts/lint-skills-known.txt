@@ -1,0 +1,27 @@
+# lint-skills-known.txt — --known exemptions for scripts/lint-skills.mjs (#1045).
+#
+# The skills-integrity lint fails on NEW occurrences; these are the
+# occurrences present in the tree the day the lint landed (2026-09-13).
+# All are the `companion` rule: backticked cross-references to OTHER
+# trees (project scaffolding paths like docs/*.md, ledger/*, the opencode
+# agent card) that only coincidentally end in .md — the lint resolves
+# inside the skill's own dir only, so these cannot be checked mechanically.
+# They are tracked as vault findings, not fixed here (out of scope, #1045).
+#
+# Format: path:rule[:ref] — a bare path:rule line exempts the whole rule
+# for that file; the :ref form exempts exactly that referenced path.
+develop/SKILL.md:companion:.opencode/agents/implementer.md
+migrate-research-project/SKILL.md:companion:config/system_model.md
+migrate-research-project/SKILL.md:companion:docs/future_directions.md
+migrate-research-project/SKILL.md:companion:docs/optimization_guide.md
+migrate-research-project/SKILL.md:companion:docs/results_summary.md
+migrate-research-project/SKILL.md:companion:docs/system_model.md
+migrate-research-project/SKILL.md:companion:ledger/hypotheses/future_directions.md
+migrate-research-project/SKILL.md:companion:ledger/observations/optimization_guide.md
+migrate-research-project/SKILL.md:companion:ledger/observations/results_summary.md
+migrate-research-project/SKILL.md:companion:paper/outline.md
+migrate-research-project/SKILL.md:companion:reports/weekly/template.md
+paper-writer/SKILL.md:companion:paper/outline.md
+paper-writer/SKILL.md:companion:skills/paper-writer/SKILL.md
+research/SKILL.md:companion:ledger/campaigns/CHECKOUTS.md
+
