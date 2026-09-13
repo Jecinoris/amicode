@@ -4,7 +4,7 @@ description: Implement one TDD-ready GitHub issue (a sub-issue, or an undecompos
 agents: []
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Implement an Issue
@@ -152,6 +152,8 @@ branch: <branch-name>
 commit_shas: [<sha>, ...]
 ac_results:
   - {criterion: "<text>", green: true|false}
+skill_findings: []        # optional: skill-vs-reality conflicts hit this slice
+                          # (findings-file paths or terse one-liners → ledger amicode/skills-integrity/)
 notes: "<blocker / deviation / escalation detail>"
 ```
 
@@ -167,6 +169,7 @@ In `--orchestrated` mode `branch` is always set and **no PR exists** — `develo
 - Never create a branch or PR at issue-creation time; the draft PR is born at the first commit.
 - Never reimplement the TDD loop inline — always call `tdd`.
 - Inherit `tdd`'s test-protection rules: never delete, skip, or mark-broken tests to force green.
+- **Skill-reality conflicts are findings, not workarounds.** If a skill instruction (an API name, path, constant, command) doesn't match observed reality, do the work AND record the conflict — quote the skill line, state the deviation — in the return's `skill_findings:` list, so the campaign ledger (`amicode/skills-integrity/`, personal vault) never depends on the implementer's filesystem reach.
 - `complete` only when **every** Acceptance Criterion is green — no "complete minus one".
 
 ## Source of truth
