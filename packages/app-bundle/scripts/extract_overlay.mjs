@@ -12,7 +12,7 @@
 // tag, never the working tree).
 //
 // SCOPE (slice b, corrected 2026-08-21): the COMPLETE fork-vs-base delta of
-// the app's build graph — packages/{app,ui,session-ui,schema,core,sdk}.
+// the app's build graph — packages/{app,ui,session-ui,schema,core,sdk,opencode}.
 //
 // The additive-only scope this slice was planned around does not typecheck:
 // ~10 additive app files depend on SYMBOL-LEVEL additions in modified files
@@ -84,7 +84,7 @@ function diffStatus(paths) {
     });
 }
 
-const GRAPH_PKGS = ["packages/app", "packages/ui", "packages/session-ui", "packages/schema", "packages/core", "packages/sdk"];
+const GRAPH_PKGS = ["packages/app", "packages/ui", "packages/session-ui", "packages/schema", "packages/core", "packages/sdk", "packages/opencode"];
 const SERVER_COUPLED_PKGS = ["packages/schema", "packages/core", "packages/sdk"];
 
 const graphDelta = diffStatus(GRAPH_PKGS);
@@ -168,7 +168,7 @@ console.log(`[extract] round-trip: all ${overlayFiles.length} files byte-identic
 const manifest = {
   schema: 4,
   slices: "b (complete app-graph delta)",
-  scope: "complete fork-vs-base delta of packages/{app,ui,session-ui,schema,core,sdk}",
+  scope: "complete fork-vs-base delta of packages/{app,ui,session-ui,schema,core,sdk,opencode}",
   fork_tag: TAG,
   fork_sha: tagSha,
   upstream_base: UPSTREAM_BASE,
