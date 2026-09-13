@@ -2,7 +2,7 @@
 name: dream-reflect
 description: Generate structured retrospectives from Claude session transcripts. Use when running a dream cycle or reviewing past sessions.
 agents: [dreamer]
-surface: public
+surface: internal
 ---
 
 # Dream: Reflect — Session Retrospectives
@@ -20,11 +20,17 @@ The argument is: $ARGUMENTS
 
 ### Step 0: Environment Setup
 
-Before running any bash in this skill, compute the path to the current project's session transcripts:
+Before running any bash in this skill, compute the session transcript dir and resolve the vault this run writes retros to:
 
 ```bash
+# Session transcripts: ~/.claude/projects/<cwd-with-slashes-as-dashes>/
 AMICO_SESSIONS_DIR="$HOME/.claude/projects/$(echo "${AMICO_ROOT:-$PWD}" | tr / -)"
+
+# Vault mounts.
+VAULTS="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"
 ```
+
+**Resolve the personal vault** — retros are personal-vault writes (per the `amico-vault` write-routing table: "personal research, sessions, scratch → personal vault"). Resolve the `kind = "personal"` mount under `$VAULTS` the same way dream:distill Step 0 does: `$AMICO_PERSONAL_VAULT` if set; otherwise the single `kind = "personal"` mount (excluding `armonia-issimo`); if zero or more than one, **stop and ask the user** — never guess, never fall back to `armonissima`. If no personal mount resolves on this machine, write to the highest-precedence writable mount and stamp frontmatter `route_intent: personal` (the `amico-vault` fallback).
 
 ### Step 1: Identify Sessions Needing Retros
 
@@ -56,17 +62,20 @@ From the first few messages, determine:
 
 #### 2c. Write Retrospective
 
-Write to `amico/vault/retrospectives/retro-YYYYMMDD-HHMMSS-{topic-slug}.md`:
+Write to `$PERSONAL_VAULT/retrospectives/retro-YYYYMMDD-HHMMSS-{topic-slug}.md` (the personal vault resolved in Step 0 — never `armonissima`; a retro reaches the company vault only via dream-promote):
 
 ```yaml
 ---
 type: retrospective
 date: YYYY-MM-DD
 session_id: "{uuid}"
+outcome: success | partial | failed | abandoned
 source: dream-reflect
 tags: [retrospective, dream, ...]
 ---
 ```
+
+Set `outcome` per `amico-vault`'s retrospective schema from what the session achieved: `success` (goal met), `partial` (some of it), `failed`, or `abandoned` — it is a required field, not prose.
 
 Body sections:
 

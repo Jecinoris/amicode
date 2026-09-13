@@ -32,20 +32,34 @@ Run this before `dream:prune` or as a standalone audit, against the relevant vau
 
 ## Schemas
 
+`amico-vault` is the single owner of these schemas — this table mirrors it, field for field (skills-integrity F10: three disagreeing copies of this table was the failure mode). Do not extend it here: when a schema changes, change it in `amico-vault` and mirror.
+
 | Type | Required fields |
 |------|----------------|
-| experiment | type, task_type, date, session_id, platform, gate, fidelity, duration_us, status, tags |
-| insight | type, date, source, evidence, confidence, tags |
-| hypothesis | type, date, source, status, evidence, tags |
-| method | type, name, date, source, applicability, tags |
-| paper | type, date, arxiv, authors, tags |
-| spec | type, date, status, priority, platform, tags |
-| plan | type, date, status, tags |
-| retrospective | type, date, tags |
+| experiment | type, date, session_id, platform, gate, task_type, status, fidelity, duration_us, tags |
+| paper | type, arxiv, title, authors, date_read, session_id, relevance, systems, tags |
+| insight | type, date, session_id, evidence, confidence, tags |
+| method | type, name, date, session_id, applicability, tags |
+| spec | type, date, session_id, status, tags, visibility |
+| plan | type, date, session_id, status, spec, tags, visibility |
+| hypothesis | type, date, session_id, status, evidence, tags |
+| hopper | type, date, status, tags |
+| retrospective | type, date, session_id, outcome, tags |
+| research-brief | type, date, session_id, tags |
+| charter | type, date, session_id, tags |
+| reference | type, date, session_id, tags |
+| note | type, date, session_id, tags |
+| system-context | type, platform, variant |
+| control-hardware | type, date, session_id, tags |
+| project | type, date, session_id, tags |
+| device | type, name, status, device_class, platforms, location, tags |
 | person | type, name, org, role, tags |
-| org | type, name, tags |
-| device | type, name, status, platforms, tags |
-| meeting | type, date, attendees, tags |
+| org | type, name, domain, relationship, tags |
+| meeting | type, date, attendees, org, topic, tags |
+
+- `session_id`: uuid on agent-generated notes, `null` on human-curated ones — present either way (`amico-vault`, "Session ID").
+- Optional/nullable fields (experiment's `source`/`source_path`/`failure_mode`/`warm_started_from`, spec's `priority`/`platform`/`linked_plan`, hopper's `promoted_to`, hypothesis's `platform`, person's `contact`) are defined in `amico-vault` — their absence is not a schema violation.
+- Types without a fuller schema (`control-hardware`, `project`) meet the generic floor every note type meets: `date + session_id + tags` (`amico-vault`, "research-brief / charter / reference / note").
 
 ## Auto-Fix Rules
 
