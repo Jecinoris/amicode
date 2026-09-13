@@ -149,3 +149,66 @@ describe("skills-integrity lint CLI (#1045)", () => {
     expect(r.status).not.toBe(0);
   });
 });
+
+// [vpath] — rotted vault-path shapes (finding F28, repo half). The 2026-09-13
+// campaign fixed five instances of the same disease (dream-state, dream-journal,
+// linkedin example path, sota-review ledger line, dream-family routing); this
+// rule is the standing tooth. Doctrine: vaults by role/kind, ops tree via
+// $AMICO_OPS, never a raw home path embedding a vault name.
+describe("skills-integrity lint [vpath] rotted vault-path rule (F28)", () => {
+  it("errors on the rotted shapes: amico/vault/, vault-aaron, ~/.claude/", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-vpath-"));
+    try {
+      makeSkill(dir, "old-ops-skill", "The ledger lives under `amico/vault/ledger/hypotheses.jsonl`.");
+      makeSkill(dir, "old-name-skill", "Read the profile at vault-aaron/amicode/ first.");
+      makeSkill(dir, "old-claude-skill", "Transcripts are read from `~/.claude/projects/` by the distiller.");
+      const r = run(["--dir", dir]);
+      expect(r.status).toBe(1);
+      const out = r.stdout + r.stderr;
+      expect(out).toMatch(/old-ops-skill\/SKILL\.md:\d+: \[vpath\] error:.*amico\/vault\//);
+      expect(out).toMatch(/old-name-skill\/SKILL\.md:\d+: \[vpath\] error:.*vault-aaron/);
+      expect(out).toMatch(/old-claude-skill\/SKILL\.md:\d+: \[vpath\] error:.*~\/\.claude\//);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns (exit 0) on rot-prone raw home paths embedding vault names", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-vpath-warn-"));
+    try {
+      makeSkill(dir, "home-path-skill", "Mounts live under `~/armonia/data/vaults/team-vault/notes.toml` per doctrine.");
+      makeSkill(dir, "data-path-skill", "The store is at `~/ops/armonia-data/mounts/index.toml`.");
+      const r = run(["--dir", dir]);
+      expect(r.status).toBe(0); // warnings never fail the lint
+      const out = r.stdout + r.stderr;
+      expect(out).toMatch(/home-path-skill\/SKILL\.md:\d+: \[vpath\] warning:/);
+      expect(out).toMatch(/data-path-skill\/SKILL\.md:\d+: \[vpath\] warning:/);
+      // a clean home path embedding no vault name is not even a warning
+      expect(out).not.toMatch(/clean-skill/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--known can exempt a vpath error (rule name is valid, never a silent typo-widen)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-vpath-known-"));
+    try {
+      makeSkill(dir, "old-ops-skill", "The ledger lives under `amico/vault/ledger/hypotheses.jsonl`.");
+      const known = join(dir, "known.txt");
+      writeFileSync(known, "old-ops-skill/SKILL.md:vpath\n");
+      const r = run(["--dir", dir, "--known", known]);
+      expect(r.status).toBe(0);
+      const out = r.stdout + r.stderr;
+      expect(out).toMatch(/old-ops-skill\/SKILL\.md:\d+: \[vpath\] known:/);
+      expect(out).not.toMatch(/\[vpath\] error:/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is clean of [vpath] errors over the repo's real skills tree", () => {
+    const r = run(["--dir", REAL_SKILLS, "--known", KNOWN_FILE]);
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/\[vpath\] error:/);
+  });
+});
