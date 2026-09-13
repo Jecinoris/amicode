@@ -4,7 +4,7 @@ description: Autonomously implement a GitHub issue-DAG end-to-end — walks one 
 agents: [orchestrator]
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Develop an Issue-DAG
@@ -45,12 +45,12 @@ Examples:
    Run correctly (from the top-level session), this check passes silently and the walk proceeds unchanged.
 2. Resolve each argument to an issue (number → the code-owning repo; URL as-is).
 3. Validate each issue exists and is open.
-4. **Dispatch the walk.** Where the **orchestrator agent** is available, invoke `@orchestrator develop <issue> [<issue> …]`; it takes over — its definition documents the develop loop: build the issue-DAG (GraphQL `subIssues`/`parent`/`blockedBy`), schedule frontiers, dispatch the Engineer→`/implement-issue` per slice in worktrees, merge + integration-test each frontier, and checkpoint by closing sub-issues and moving board cards.
-5. **Fallback — run the walk in-session, dispatching per slice where the engine allows.** Where no orchestrator agent is dispatchable in this environment, the top-level session runs the same loop itself: per frontier, create each slice's branch in its own git worktree, then either
+4. **Dispatch the walk.** Where the **orchestrator agent** is available, invoke `@orchestrator develop <issue> [<issue> …]`; it takes over — its definition documents the develop loop: build the issue-DAG (GraphQL `subIssues`/`parent`/`blockedBy`), schedule frontiers, dispatch the Engineer→`/implement-issue` per slice via `amicode_session` with `workspace: "create"` (each slice gets its own worktree and `opencode/<slug>` branch), merge + integration-test each frontier, and checkpoint by closing sub-issues and moving board cards.
+5. **Fallback — run the walk in-session, dispatching per slice where the engine allows.** Where no orchestrator agent is dispatchable in this environment, the top-level session runs the same loop itself: per frontier, spawn each slice's implementer session via `amicode_session` with `workspace: "create"` — this creates an isolated worktree with an `opencode/<slug>` branch; **never call `git worktree add` directly** — then either
    - **dispatch each slice to the Engineer as a subagent** — where the session's agent registry provides one (see *Role binding* below), one dispatch per slice, capped by `AMICO_MAX_PARALLEL`, each executing the slice per `implement-issue --orchestrated` semantics in its worktree (Planning gate pre-satisfied by the published issue; **no per-slice PR**) and returning the step-7 structured result; or
    - **execute the slices sequentially itself** where no dispatchable agent exists, per the same `--orchestrated` semantics.
 
-   In both modes the integration PR is opened here, the frontier's branches merge into it sequentially, sub-issues close and cards advance, then the walk continues. Say plainly which mode is running. Parallelism is lost only in the sequential sub-mode; correctness never is.
+   In both modes the integration PR is opened here, the frontier's branches merge into it sequentially, sub-issues close and cards advance, then the walk continues. Every integrate boundary also runs the skill-integrity hooks: the skills lint (`node packages/extension/scripts/lint-skills.mjs`) when available on the branch (currently PR #1046), and a diff-check — where merged work changed a package API surface, grep the skill library for references to the changed symbols; hits become findings in `amicode/skills-integrity/` (personal vault). Every record boundary then carries a **skill delta** row: findings filed, skills touched, proposals pending. Say plainly which mode is running. Parallelism is lost only in the sequential sub-mode; correctness never is.
 
 ## Top-session-only invariant
 
@@ -68,7 +68,19 @@ That is why `/develop` must be invoked from the top-level session (interactive, 
 
 ## Parallel dispatch
 
-When a frontier has independent slices (non-overlapping `Touches:`/files, no `Blocked by` between them), dispatch them concurrently via git worktrees, capped by `AMICO_MAX_PARALLEL` (default 2; lower to 1 for Julia-heavy work). In the in-session fallback this concurrency is bounded by subagent dispatch (Step 5); only where no dispatchable agent exists does it collapse to one-at-a-time. The worktree isolation is worth keeping in every mode. A slice that started in **Blocked** (an open `Blocked by` at creation) flips to **Ready** the instant its last blocker's PR merges — then to In Progress when actually dispatched (a parked-but-unblocked slice must not sit in stale Blocked). On dispatch, each slice's sub-issue card moves to **In Progress** (see `write-an-issue` step 7e); on its merge into the integration branch, closing the sub-issue lets the board's "Item closed" workflow move it to Done. Slices merge into the integration branch sequentially after the frontier completes.
+When a frontier has independent slices (non-overlapping `Touches:`/files, no `Blocked by` between them), dispatch them concurrently via `amicode_session` with `workspace: "create"`, capped by `AMICO_MAX_PARALLEL` (default 2; lower to 1 for Julia-heavy work). In the in-session fallback this concurrency is bounded by subagent dispatch (Step 5); only where no dispatchable agent exists does it collapse to one-at-a-time. The worktree isolation is worth keeping in every mode. A slice that started in **Blocked** (an open `Blocked by` at creation) flips to **Ready** the instant its last blocker's PR merges — then to In Progress when actually dispatched (a parked-but-unblocked slice must not sit in stale Blocked). On dispatch, each slice's sub-issue card moves to **In Progress** (see `write-an-issue` step 7e); on its merge into the integration branch, closing the sub-issue lets the board's "Item closed" workflow move it to Done.
+
+### Merge strategy
+
+The parent `develop` session merges worktree branches into the integration branch in **dependency-DAG order** — leaves before their dependents, never the reverse. The procedure after a frontier completes:
+
+1. For each green branch in DAG-topological order, merge it into the integration branch.
+2. **On merge conflict:** spawn a resolution session via `amicode_session` with `workspace: "<path>"` targeting the conflicting worktree. The resolution session rebases or resolves the conflict, commits, and returns.
+3. **Unresolved conflicts** (resolution session fails or the conflict is structural): surface to the user with the conflicting files listed — never force-merge or silently drop changes.
+
+### Worktree cleanup
+
+Worktree removal after a successful merge is **best-effort**: the parent session attempts to remove the worktree directory after merging its branch. Residual worktrees (from crashes, interrupted sessions, or failed cleanups) are handled by the lifecycle tool `amicode_workspace` — never manually `rm -rf` a worktree directory or call `git worktree remove` directly.
 
 ## Role binding (engine-neutral)
 

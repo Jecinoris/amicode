@@ -1,7 +1,7 @@
 ---
 name: amico-slack
 description: Interacting with Slack — sending updates, reading channel discussions/threads, formatting equations into Slack Unicode/mrkdwn, and managing Slack messages on Aaron's behalf.
-agents: [researcher, pulse-designer, librarian]
+agents: [researcher, librarian]
 surface: public
 cli_tool: ~/.local/bin/amico-slack
 ---

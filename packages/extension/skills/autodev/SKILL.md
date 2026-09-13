@@ -4,7 +4,7 @@ description: The develop mode's director loop protocol — the dev gate pack's p
 agents: [implementer]
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Develop — the director's protocol
@@ -43,7 +43,7 @@ Nine sections, in order:
 2. Verdict table — issues/slices → status → evidence (gate verdicts, PR links)
 3. Active work — every in-flight item, INCLUDING uncommitted per-file diff
    state AND every in-flight implementer cast (role, session id, issue ref,
-   worktree branch, expected artifacts)
+   worktree directory path, `opencode/<slug>` branch name, expected artifacts)
 4. Blocked & reasons
 5. Next queue
 6. Checkout topology (the campaign's worktree rows in the checkout registry)
@@ -96,10 +96,14 @@ one gate set per phase. One loop:
    frontier's green branches into the integration branch, close sub-issues,
    advance board cards; **review** (human-owned) gates any unit finishing under
    HITL — a ready PR approved by a reviewer who is never the implementer, no
-   merge before that approval.
+   merge before that approval. The integrate phase also runs the skill-integrity
+   hooks (skills lint when available on the branch; API-surface diff-check
+   against the skill library — findings to `amicode/skills-integrity/`; the
+   `develop` walk carries the full text).
 7. **Record.** Commit the ledger update: verdict-table row, loop-log row, §3
    state, next queue. Close every advisory (fixed / waived-with-reason /
-   obsolete) and record closures.
+   obsolete) and record closures. The update also carries the campaign's
+   **skill delta** — findings filed, skills touched, proposals pending.
 8. **Repeat.** Compact only at a boundary, and only when the user is present
    to choose it — the protocol does not otherwise try to time compaction (see
    below).
@@ -130,7 +134,8 @@ seed** from `research`. The procedure, both directions:
   question the issues surfaced), write the hypothesis-seed note (name the
   target posture, the question, the evidence), then hand it over — the
   receiving mode's protocol (the `research` skill) picks it up from there.
-- **Switching modes mid-session: PENDING-D5.** The posture switcher (the
+- **Switching modes mid-session is not yet specified; the mode cards'
+  posture-honesty sections govern until it is.** The posture switcher (the
   titlebar's mid-session agent switch) is not landed on every install yet —
   until the fork's posture surfaces ship, the safe path is to **spawn or open
   the target posture's session on the seed** rather than switching in place;
@@ -172,10 +177,11 @@ every compaction.
 
 ## Parallel sessions & shared checkouts
 
-Worktrees are the isolation unit; the checkout registry is the project-wide
+Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add`. Each worktree gets an `opencode/<slug>` branch. The checkout registry is the project-wide
 claim registry. Re-read it before casting any implementer; claim the row;
 release it when work lands. First-writer-wins; races are possible and
 visible — a visible conflict beats a silent double-ownership every time.
+Worktree cleanup after merge is best-effort; residual worktrees are handled by `amicode_workspace`.
 
 ## Standing anti-gaming contract
 
