@@ -14,8 +14,6 @@ Post-experiment analysis for Amico optimization results.
 `/analyze` — analyze recent experiment notes and catalog entries for patterns.
 `/analyze <platform>` — focus analysis on a specific platform.
 
-The argument is: $ARGUMENTS
-
 ## Instructions
 
 ### When to Run
@@ -58,7 +56,7 @@ Trace chains via `warm_started_from` in catalog:
 - **Insight notes**: Create in `<project>/ledger/observations/` when patterns are clear (3+ supporting experiments)
 - **Strategy suggestions**: Note which STRATEGY.md priorities are progressing vs stuck
 
-> **Fidelity convention:** Always report both fixed-phase and free-phase fidelity for multi-subsystem gates. Free-phase is the primary metric. Fixed-phase routinely underreports by 6–80 pp for entangling gates. Ref: [[insight-20260412-054400-synthesis-free-phase-gap-scales-with-gate-type]].
+> **Fidelity convention:** Always report both fixed-phase and free-phase fidelity for multi-subsystem gates — free-phase is the primary metric, and fixed-phase can underreport substantially for entangling gates. The `setup` skill owns the canonical statement of this convention (the quantified gap and its reference) — consult it rather than restating it here.
 
 ### Quality Bar
 - Only generate insights with evidence from 3+ experiments
