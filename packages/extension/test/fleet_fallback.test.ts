@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { goStandalone, readFleetConfig, getFleetRole, writeFleetConfig, isFleetClient, removeFleetConfig } from "../src/fleet_fallback";
+import { goStandalone, enrollFleet, readFleetConfig, getFleetRole, writeFleetConfig, isFleetClient, removeFleetConfig } from "../src/fleet_fallback";
 
 describe("fleet_fallback (fleet config)", () => {
   let tmp: string;
@@ -50,5 +50,30 @@ describe("fleet_fallback (fleet config)", () => {
     const cfg = goStandalone({ path: p, previousBinary: "/old/bin", previousPort: 4096 });
     expect(cfg.previousBinary).toBe("/old/bin");
     expect(cfg.previousPort).toBe(4096);
+  });
+
+  it("enrollFleet writes role=client with the canonical topology", () => {
+    const cfg = enrollFleet({ sshAlias: "erlich", port: 4096, path: p });
+    expect(cfg.role).toBe("client");
+    expect(cfg.canonical?.sshAlias).toBe("erlich");
+    expect(cfg.canonical?.port).toBe(4096);
+    expect(cfg.canonical?.host).toBe("erlich");
+    expect(readFleetConfig(p)?.role).toBe("client");
+  });
+
+  it("enrollFleet preserves previous settings across the standalone round-trip", () => {
+    goStandalone({ path: p, previousBinary: "/old/guard", previousPort: 4096 });
+    enrollFleet({ sshAlias: "erlich", path: p });
+    const cfg = readFleetConfig(p);
+    expect(cfg?.role).toBe("client");
+    expect(cfg?.previousBinary).toBe("/old/guard");
+    expect(cfg?.previousPort).toBe(4096);
+    expect(cfg?.canonical?.port).toBe(4096);
+  });
+
+  it("enrollFleet defaults the port from what is on file", () => {
+    writeFleetConfig({ role: "standalone", canonical: { host: "x", port: 5050, sshAlias: "x" } }, p);
+    const cfg = enrollFleet({ sshAlias: "x", path: p });
+    expect(cfg.canonical?.port).toBe(5050);
   });
 });

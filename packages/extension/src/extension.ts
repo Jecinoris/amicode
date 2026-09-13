@@ -59,7 +59,7 @@ import {
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
-import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { isFleetClient, getFleetRole, goStandalone, enrollFleet, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
@@ -1449,6 +1449,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       fleetStatusItem.tooltip = `Fleet client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096}`;
       fleetStatusItem.command = "amicode.fleet.goStandalone";
       fleetStatusItem.show();
+    } else if (role === "standalone") {
+      // A standalone machine still gets the item — hiding it left the user
+      // stranded ("stuck in standalone with only the ability to ask a session
+      // to get back"). The item IS the way back: it runs Fleet — Enroll.
+      fleetStatusItem.text = "$(cloud) Amicode: standalone";
+      fleetStatusItem.tooltip = "Running a local server, not in the fleet. Click to rejoin the fleet (Fleet — Enroll).";
+      fleetStatusItem.command = "amicode.fleet.enroll";
+      fleetStatusItem.show();
     } else {
       fleetStatusItem.hide();
     }
@@ -1555,6 +1563,85 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
+
+  // Fleet — Enroll (rejoin the fleet): the way back from standalone (#338 named
+  // re-enrollment "a separate flow"; this is that flow). Writes the topology
+  // truth, drives the machine-scoped installer in a visible terminal, and
+  // guarantees the installed tunnel plist carries the alias (older installers
+  // shipped the FLEET_SSH_ALIAS placeholder unsubstituted).
+  const readTunnelAliasFromPlist = (): string | undefined => {
+    try {
+      const plist = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      if (!fs.existsSync(plist)) return undefined;
+      const raw = fs.readFileSync(plist, "utf8");
+      const match = raw.match(/<string>([^<]*)<\/string>\s*<\/array>/);
+      const alias = match?.[1]?.trim();
+      return alias && alias !== "FLEET_SSH_ALIAS" ? alias : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const runFleetEnroll = async (): Promise<void> => {
+    const role = getFleetRole();
+    if (role === "client") {
+      void vscode.window.showInformationMessage("Amicode: already a fleet client.");
+      return;
+    }
+    const cfg = readFleetConfig();
+    const prefill = cfg?.canonical?.sshAlias ?? readTunnelAliasFromPlist() ?? "";
+    const alias = await vscode.window.showInputBox({
+      prompt: "SSH alias of the fleet's canonical machine (e.g. erlich) — the machine your sessions live on",
+      value: prefill,
+      ignoreFocusOut: true,
+    });
+    if (!alias) return;
+    const portStr = await vscode.window.showInputBox({
+      prompt: "Canonical server port",
+      value: String(cfg?.canonical?.port ?? cfg?.previousPort ?? 4096),
+      ignoreFocusOut: true,
+    });
+    const port = Math.max(1, Math.min(65535, Number.parseInt(portStr ?? "4096", 10) || 4096));
+    enrollFleet({ sshAlias: alias, port });
+    opencodeChannel.appendLine(`[fleet] enrolled: role=client → ${alias}:${port} (canonical)`);
+    // Machine-scoped repair: guard + settings + tunnel, in a visible terminal.
+    const script = path.resolve(ctx.extensionPath, "tools", "fleet", "install.sh");
+    if (fs.existsSync(script)) {
+      const term = vscode.window.createTerminal({ name: "Amicode: Fleet — Enroll" });
+      term.show();
+      term.sendText(`bash "${script}"`);
+    } else {
+      opencodeChannel.appendLine(`[fleet] enroll: installer not found at ${script} — writing settings directly`);
+      const wcfg = vscode.workspace.getConfiguration("amicode");
+      await wcfg.update("opencodePort", port, vscode.ConfigurationTarget.Global);
+    }
+    // Belt and suspenders: an installer predating the alias-substitution fix
+    // ships the FLEET_SSH_ALIAS placeholder — fix the installed plist here so
+    // the tunnel cannot loop on an unresolvable hostname.
+    if (process.platform === "darwin") {
+      try {
+        const plist = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        if (fs.existsSync(plist)) {
+          const raw = fs.readFileSync(plist, "utf8");
+          if (raw.includes("FLEET_SSH_ALIAS")) {
+            fs.writeFileSync(plist, raw.replace(/<string>FLEET_SSH_ALIAS<\/string>/, `<string>${alias}</string>`));
+          }
+          const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+          try { execFileSync("launchctl", ["unload", plist], { timeout: 5000, stdio: "ignore" }); } catch {}
+          try { execFileSync("launchctl", ["load", plist], { timeout: 5000, stdio: "ignore" }); } catch {}
+          opencodeChannel.appendLine(`[fleet] enroll: tunnel plist carries alias ${alias} — launchd reloaded`);
+        }
+      } catch (e) {
+        opencodeChannel.appendLine(`[fleet] enroll: plist substitution failed — ${(e as Error).message}`);
+      }
+    }
+    refreshFleetStatus();
+    const pick = await vscode.window.showInformationMessage(
+      `Amicode: enrolled into the fleet (${alias}:${port}). Reload the window to attach to the canonical server.`,
+      "Reload",
+    );
+    if (pick === "Reload") void vscode.commands.executeCommand("workbench.action.reloadWindow");
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.enroll", () => void runFleetEnroll()));
 
   // amicode#649: "Amicode: Restart Hub Server" — fleet clients restart the
   // canonical hub over SSH by driving ops/hub-restart.sh (the one restart-safe

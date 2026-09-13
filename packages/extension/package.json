@@ -155,6 +155,10 @@
         "title": "Amicode: Fleet & Versions (doctor's surface report)"
       },
       {
+        "command": "amicode.fleet.enroll",
+        "title": "Amicode: Fleet — Enroll (rejoin the fleet)"
+      },
+      {
         "command": "amicode.fleet.goStandalone",
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
       },

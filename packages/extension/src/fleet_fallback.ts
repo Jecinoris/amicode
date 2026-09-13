@@ -80,6 +80,27 @@ export function goStandalone(opts: { previousBinary?: string; previousPort?: num
   return config;
 }
 
+/** Enroll (rejoin) a fleet: write role=client with the canonical machine. The
+ *  counterpart of goStandalone (#338 called re-enrollment "a separate flow" —
+ *  this is it). Preserves any previous* settings already on file. The machine-
+ *  scoped repair (guard + tunnel + settings.json) stays the installer's job
+ *  (`tools/fleet/install.sh`); this only writes the topology truth. */
+export function enrollFleet(
+  opts: { sshAlias: string; port?: number; host?: string; path?: string } = { sshAlias: "" },
+): FleetConfig {
+  const p = opts.path ?? FLEET_CONFIG_PATH;
+  const prev = readFleetConfig(p);
+  const port = opts.port ?? prev?.previousPort ?? prev?.canonical?.port ?? 4096;
+  const config: FleetConfig = {
+    role: "client",
+    canonical: { host: opts.host ?? opts.sshAlias, port, sshAlias: opts.sshAlias },
+    previousBinary: prev?.previousBinary,
+    previousPort: prev?.previousPort,
+  };
+  writeFleetConfig(config, p);
+  return config;
+}
+
 /** Remove fleet config entirely (equivalent to standalone — no file = standalone). */
 export function removeFleetConfig(p: string = FLEET_CONFIG_PATH): void {
   try { fs.unlinkSync(p); } catch {}
