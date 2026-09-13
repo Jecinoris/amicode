@@ -39,6 +39,7 @@ import {
   freshnessBetween,
   readProjection,
   renderFleetStatus,
+  fleetProjectionCachePath,
   type FleetProjection,
 } from "@amicode/schema";
 import { PREMIUM_CODE, readCodes } from "./premium.js";
@@ -72,6 +73,13 @@ export interface FleetProjectionDeps {
   readFile?: (p: string) => string | null;
   /** THE invocation seam (injectable): the publisher subprocess call. */
   runPublisher?: (inv: PublisherInvocation) => PublisherResult;
+  /** #1106 (P3b-2): where the validated projection is cached for the
+   *  consumers. Default: the stable convention path
+   *  (`~/.amico/ops/fleet/projection.json` — the live-layout precedent). */
+  cachePath?: string;
+  /** #1106: the cache write (injectable). Default: mkdir -p + atomic
+   *  tmp+rename, mirroring the extension's writeFleetConfig discipline. */
+  writeCache?: (p: string, content: string) => void;
 }
 
 function flagValue(argv: string[], name: string): string | undefined {
@@ -135,12 +143,28 @@ function bootstrap(reason: "entitlement" | "checkout", rendered: string, extra: 
 }
 
 /** A section's carried value, with the base default applied when the section
- *  is absent (mode absent = standalone, posture absent = ok — the projection
- *  contract's additive-optional discipline; the base default is applied, not
- *  invented: the reader's render states it in provenance). */
+ * is absent (mode absent = standalone, posture absent = ok — the projection
+ * contract's additive-optional discipline; the base default is applied, not
+ * invented: the reader's render states it in provenance). */
 function scalarOrBase(proj: FleetProjection, section: string, base: string): unknown {
   const s = proj.sections?.[section];
   return s?.value === undefined ? base : s.value;
+}
+
+/** A section's carried value when it is an object (topology), else undefined —
+ * absent stays absent, never an invented {} (#1106 machine fields). */
+function objectValue(proj: FleetProjection, section: string): Record<string, unknown> | undefined {
+  const v = proj.sections?.[section]?.value;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return v as Record<string, unknown>;
+}
+
+/** A named object field of a carried value (topology.canonical), tolerantly. */
+function objectField(obj: Record<string, unknown> | undefined, field: string): Record<string, unknown> | undefined {
+  if (obj === undefined) return undefined;
+  const v = obj[field];
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return v as Record<string, unknown>;
 }
 
 /** `amico fleet status --projection` — resolve the checkout (the premium
@@ -217,8 +241,10 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
     }
 
     let proj: FleetProjection;
+    let published: string;
     try {
       proj = readProjection(inv.outPath);
+      published = fs.readFileSync(inv.outPath, "utf8");
     } catch (e) {
       // The reader's LOUD rejection surfaces verbatim — a versioned contract
       // refuses both directions, naming both versions (invariant 5).
@@ -228,6 +254,28 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
           : `the published projection at ${inv.outPath} failed the contract read: ${(e as Error).message}`;
       return fail([message], { checkout, out_path: inv.outPath });
     }
+
+    // ── the stable projection-cache refresh (#1106, P3b-2) ──
+    // ONLY a projection the reader validated reaches the cache — a rejected
+    // contract version never clobbers the consumers' artifact. The cached
+    // bytes are the publisher's own output, verbatim.
+    const cachePath = deps.cachePath ?? fleetProjectionCachePath();
+    const writeCache =
+      deps.writeCache ??
+      ((p: string, content: string) => {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        const tmpFile = `${p}.tmp`;
+        fs.writeFileSync(tmpFile, content);
+        fs.renameSync(tmpFile, p);
+      });
+    writeCache(cachePath, published);
+
+    // ── the additive machine fields for script consumers (#1106) ──
+    // The installer (and any bash consumer) reads `role` + `canonical` from
+    // this JSON line instead of grepping the raw fleet.json; absent topology
+    // renders absent, never invented.
+    const topology = objectValue(proj, "topology");
+    const canonical = objectField(topology, "canonical");
 
     const verdict = previous === null ? null : freshnessBetween(previous, proj);
     const advisory = verdict === null ? "" : freshnessAdvisory(verdict);
@@ -241,6 +289,9 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
         checkout,
         mode: scalarOrBase(proj, "mode", "standalone"),
         posture: scalarOrBase(proj, "posture", "ok"),
+        ...(topology === undefined ? {} : { role: topology.role }),
+        ...(canonical === undefined ? {} : { canonical }),
+        cache_path: cachePath,
         publisher: proj.publisher ?? {},
         sections: proj.sections ?? {},
         freshness: {
@@ -250,7 +301,8 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
         },
         summary: renderFleetStatus(proj, previous),
         note: "read through the ONE fleet projection reader (@amicode/schema fleet_projection, contract v"
-          + String(proj.contract_version) + ") — amicissimo parses and publishes, amicode consumes (spec §3 D1); provenance renders beside the data, never merged",
+          + String(proj.contract_version) + ") — amicissimo parses and publishes, amicode consumes (spec §3 D1); provenance renders beside the data, never merged; the validated projection is cached for the P3b-2 consumers at "
+          + cachePath,
       },
       code: 0,
     };

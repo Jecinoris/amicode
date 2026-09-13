@@ -182,6 +182,8 @@ export {
   freshnessBetween,
   freshnessAdvisory,
   renderFleetStatus,
+  fleetProjectionCachePath,
+  FLEET_PROJECTION_CACHE_RELPATH,
   type FleetFreshness,
   type FleetProjection,
   type FleetProvenance,
