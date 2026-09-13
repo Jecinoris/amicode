@@ -43,7 +43,7 @@ Nine sections, in order:
 2. Verdict table — issues/slices → status → evidence (gate verdicts, PR links)
 3. Active work — every in-flight item, INCLUDING uncommitted per-file diff
    state AND every in-flight implementer cast (role, session id, issue ref,
-   worktree branch, expected artifacts)
+   worktree directory path, `opencode/<slug>` branch name, expected artifacts)
 4. Blocked & reasons
 5. Next queue
 6. Checkout topology (the campaign's worktree rows in the checkout registry)
@@ -172,10 +172,11 @@ every compaction.
 
 ## Parallel sessions & shared checkouts
 
-Worktrees are the isolation unit; the checkout registry is the project-wide
+Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add`. Each worktree gets an `opencode/<slug>` branch. The checkout registry is the project-wide
 claim registry. Re-read it before casting any implementer; claim the row;
 release it when work lands. First-writer-wins; races are possible and
 visible — a visible conflict beats a silent double-ownership every time.
+Worktree cleanup after merge is best-effort; residual worktrees are handled by `amicode_workspace`.
 
 ## Standing anti-gaming contract
 
