@@ -43,7 +43,9 @@ export const PREMIUM_CODE = "amicissimo";
 // replaces both). Minimal TOML: the v1 file is `codes = [...]` (+ `expired`).
 // An absent file = public-only, silently; a malformed file = no codes, silently
 // (an entitlement failure never dead-ends anything — the funnel invariant).
-function readCodes(file: string, deps: PremiumDeps): string[] {
+// EXPORTED for the fleet projection status verb (#1068): the entitlement gate
+// is the same machinery — one codes reader, never a per-verb reimplementation.
+export function readCodes(file: string, deps: PremiumDeps): string[] {
   const read = deps.readFile ?? ((p: string) => (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null));
   const raw = read(file);
   if (raw === null) return [];
