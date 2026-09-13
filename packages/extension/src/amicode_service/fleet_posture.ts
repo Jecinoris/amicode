@@ -16,6 +16,22 @@
 // written into the base-owned schema with bidirectional preserve-on-rewrite
 // (the attach-state store itself is Slice A's F4-stamped discipline).
 //
+// ── ADR-0005 READING CONVENTION (amicissimo #410, amicode #1069) ──────────────
+// The vocabulary above is the FROZEN pre-split form, preserved verbatim for
+// its legacy consumers (this module's write path is unchanged and its
+// fixtures stay byte-identical; the consumer switch is P3b-2, a later
+// slice). Under the mode/posture split, its residual prose reads as:
+//   · "fleet"        = mode fleet + posture ok
+//   · "degraded"     = mode fleet + posture degraded
+//   · "standalone"   = the hub-down posture's frozen RENDERING (base
+//                      standalone) — a rendering, never a membership fact
+//   · "recovery re-enters fleet mode" = recovery re-enters posture ok and
+//                      never writes the mode field.
+// The AMENDED write path is the mode machine (attach_state.ts) fed by the
+// transport classifier (transport_classifier.ts) — the sole attach-state
+// writer per ADR-0005; the classifier carries this module's D6 constants
+// over as its base defaults (one vocabulary source, not a fork).
+//
 // The detector is a pure synchronous state machine: `record()` never
 // awaits, never throws, and cannot wedge — the timeout enforcement lives
 // with the transport (hub_proxy / fleet_writes), which feeds outcomes here.
