@@ -680,6 +680,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     let fleetReady = false;
     let fleetChecks = 0;
     let fleetNotified = false;
+    // A slow network is not a decision. The poll runs every 2s; standalone is
+    // only OFFERED after a full minute down — the 2026-09-13 train-wifi
+    // incident had the ~10s toast convert a slow SSH establishment into an
+    // accidental mode exit (four times in one afternoon). The toast's Go
+    // Standalone still routes through runFleetGoStandalone's modal confirm.
+    const FLEET_STANDALONE_OFFER_AFTER_CHECKS = 30;
     const checkFleet = async () => {
       fleetChecks++;
       try {
@@ -711,8 +717,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         } else if (!up && !fleetReady && fleetChecks === 1) {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
         }
-        // After ~10s (5 checks) still down → offer standalone visibly, not just a log
-        if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
+        // After a full minute down → offer standalone visibly, not just a log
+        if (!up && !fleetReady && !fleetNotified && fleetChecks >= FLEET_STANDALONE_OFFER_AFTER_CHECKS) {
           fleetNotified = true;
           opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
           void vscode.window
@@ -731,7 +737,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         } else if (fleetChecks === 1) {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — will retry`);
         }
-        if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
+        if (!fleetReady && !fleetNotified && fleetChecks >= FLEET_STANDALONE_OFFER_AFTER_CHECKS) {
           fleetNotified = true;
           opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
           void vscode.window
