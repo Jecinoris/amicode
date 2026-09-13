@@ -1937,7 +1937,10 @@ returns an error, fix \`js\`/the fields and call it again.
         "branching work the USER should see and interact with. When chaining into a specific " +
         "skill (e.g. spawning create-research-environment from a migrate session), pass " +
         "`command` — it uses the engine's command API to invoke the skill directly instead of " +
-        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt.",
+        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt. " +
+        "Pass `workspace` to isolate the child session in its own git worktree — " +
+        "\"create\" provisions a new worktree, a path string reuses an existing one, " +
+        "null (default) inherits the parent directory.",
       args: {
         prompt: {
           type: "string",
@@ -1977,6 +1980,14 @@ returns an error, fix \`js\`/the fields and call it again.
             "reliable for skill-to-skill chaining. The `prompt` text becomes the command's " +
             "`arguments`. Null = send prompt as a regular user message (default).",
         },
+        workspace: {
+          type: ["string", "null"],
+          description:
+            'Workspace isolation for the child session. "create" provisions a new git ' +
+            "worktree and scopes the child to it; a path string reuses an existing worktree " +
+            "(validated as a git worktree of this project); null (default) inherits the parent " +
+            "directory. Requires the experimental worktrees feature to be enabled.",
+        },
       },
       async execute(
         a: {
@@ -1988,6 +1999,7 @@ returns an error, fix \`js\`/the fields and call it again.
           mode?: string | null;
           force?: boolean | null;
           command?: string | null;
+          workspace?: string | null;
         },
         ctx: { sessionID: string; directory: string },
       ) {

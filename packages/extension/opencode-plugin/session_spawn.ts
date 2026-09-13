@@ -47,6 +47,7 @@ export type SpawnArgs = {
   command: string | null;
   mode: SpawnMode;
   force: boolean;
+  workspace: "create" | string | null;
 };
 
 export function parseSpawnArgs(a: {
@@ -58,6 +59,7 @@ export function parseSpawnArgs(a: {
   command?: string | null;
   mode?: string | null;
   force?: boolean | null;
+  workspace?: string | null;
 }): { ok: true; args: SpawnArgs } | { ok: false; error: string } {
   const prompt = typeof a.prompt === "string" ? a.prompt.trim() : "";
   if (!prompt) return { ok: false, error: "empty prompt" };
@@ -75,6 +77,13 @@ export function parseSpawnArgs(a: {
   const agent = typeof a.agent === "string" && a.agent.trim() !== "" ? a.agent.trim() : null;
   const title = typeof a.title === "string" && a.title.trim() !== "" ? a.title.trim() : null;
   const command = typeof a.command === "string" && a.command.trim() !== "" ? a.command.trim() : null;
+  // workspace (#1060): "create" = new worktree, a non-empty string path = reuse
+  // that worktree, null/omitted = no workspace isolation (existing behavior).
+  let workspace: SpawnArgs["workspace"] = null;
+  if (typeof a.workspace === "string") {
+    if (a.workspace === "") return { ok: false, error: "workspace must be \"create\" or a non-empty path, got empty string" };
+    workspace = a.workspace;
+  }
   // the read-resolve alias (spec-20260907-011500 D1, #858): an old director
   // id on the amico_session agent param binds the renamed card. READ-RESOLVE,
   // never migrate-on-write; `build` and every non-aliased id pass through.
@@ -89,6 +98,7 @@ export function parseSpawnArgs(a: {
       command,
       mode,
       force: a.force === true,
+      workspace,
     },
   };
 }
@@ -146,12 +156,24 @@ export type SpawnGate = {
   coalesce<T>(key: string, run: () => Promise<T>): Promise<T>;
 };
 
+/** Counter for workspace: "create" gate keys — each "create" dispatch gets a
+ *  unique key so concurrent worktree creations are NEVER coalesced (each needs
+ *  its own worktree). Explicit-path dispatches use the path as key component
+ *  and coalesce normally. */
+let _createCounter = 0;
+
 /** Stable key for one spawn dispatch: the calling session's identity plus the
  * FULLY-PARSED signature (parseSpawnArgs-normalized — a re-serialized retry
  * that says count:1 where the first said count:null lands on the same key).
  * Anything that changes what the dispatch does (mode, force, model, prompt,
- * count, title, agent, caller) changes the key. */
+ * count, title, agent, caller, workspace) changes the key.
+ *
+ * Special: workspace: "create" includes a monotonic counter so two concurrent
+ * "create" dispatches are NEVER coalesced — each needs its own worktree.
+ * Explicit-path dispatches coalesce normally (same path = same key). */
 export function spawnGateKey(sessionID: string, directory: string, args: SpawnArgs): string {
+  // workspace: "create" gets a unique suffix so it never coalesces
+  const wsKey = args.workspace === "create" ? `create:${++_createCounter}` : (args.workspace ?? null);
   return JSON.stringify([
     sessionID,
     directory,
@@ -163,6 +185,7 @@ export function spawnGateKey(sessionID: string, directory: string, args: SpawnAr
     args.command,
     args.mode,
     args.force,
+    wsKey,
   ]);
 }
 

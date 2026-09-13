@@ -175,6 +175,13 @@ export interface EngineClientShape {
     promptAsync: (o: unknown) => Promise<unknown>;
     command: (o: unknown) => Promise<unknown>;
   };
+  /** Worktree management API — OPTIONAL so existing tests and transports
+   *  that don't use workspace isolation still compile (#1060). */
+  worktree?: {
+    create: (o: unknown) => Promise<unknown>;
+    list: (o?: unknown) => Promise<unknown>;
+    remove: (o: unknown) => Promise<unknown>;
+  };
 }
 
 /** What a transport hands each execute() call. The plugin fills engineClient
@@ -1952,7 +1959,10 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         "branching work the USER should see and interact with. When chaining into a specific " +
         "skill (e.g. spawning create-research-environment from a migrate session), pass " +
         "`command` — it uses the engine's command API to invoke the skill directly instead of " +
-        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt.",
+        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt. " +
+        "Pass `workspace` to isolate the child session in its own git worktree — " +
+        "\"create\" provisions a new worktree, a path string reuses an existing one, " +
+        "null (default) inherits the parent directory.",
       args: {
         prompt: {
           type: "string",
@@ -1992,6 +2002,14 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             "reliable for skill-to-skill chaining. The `prompt` text becomes the command's " +
             "`arguments`. Null = send prompt as a regular user message (default).",
         },
+        workspace: {
+          type: ["string", "null"],
+          description:
+            'Workspace isolation for the child session. "create" provisions a new git ' +
+            "worktree and scopes the child to it; a path string reuses an existing worktree " +
+            "(validated as a git worktree of this project); null (default) inherits the parent " +
+            "directory. Requires the experimental worktrees feature to be enabled.",
+        },
       },
       async execute(
         a: {
@@ -2003,6 +2021,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           mode?: string | null;
           force?: boolean | null;
           command?: string | null;
+          workspace?: string | null;
         },
         ctx: AmicodeToolContext,
       ) {
@@ -2063,9 +2082,94 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         const model =
           routed.model ??
           args.model ??
-          (own?.model?.providerID && own?.model?.modelID
+           (own?.model?.providerID && own?.model?.modelID
             ? { providerID: own.model.providerID, modelID: own.model.modelID }
             : null);
+
+        // ── workspace isolation (#1060) ──────────────────────────────────
+        // Resolve the session's working directory: when a workspace is
+        // requested, provision or validate the worktree BEFORE creating any
+        // child sessions. The handler NEVER falls back to the parent
+        // directory on failure — it fails hard with an explicit reason.
+        let sessionDir = ctx.directory ?? "";
+        let worktreeWarning = "";
+        let createdWorktreeDir: string | null = null;
+
+        if (args.workspace !== null) {
+          if (args.workspace === "create") {
+            // Provision a new worktree via the engine's worktree API.
+            if (!engineClient.worktree) {
+              return "Cannot spawn: Workspace isolation requires the experimental worktrees feature to be enabled.";
+            }
+            let wtResult: { directory?: string } | undefined;
+            try {
+              const wtPromise = engineClient.worktree.create({
+                query: { directory: ctx.directory },
+              });
+              // 30-second timeout: abort if worktree creation hangs.
+              const timeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("__worktree_timeout__")), 30_000),
+              );
+              wtResult = unwrap<{ directory?: string }>(
+                await Promise.race([wtPromise, timeout]),
+              );
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (msg === "__worktree_timeout__") {
+                // Best-effort cleanup of the partial worktree.
+                try { await engineClient.worktree.remove({ query: { directory: ctx.directory } }); } catch { /* best-effort */ }
+                return JSON.stringify({ error: "Worktree creation timed out after 30 seconds.", reason: "timeout" });
+              }
+              // Feature gate: translate the API rejection into an actionable message.
+              if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+                return JSON.stringify({ error: "Workspace isolation requires the experimental worktrees feature to be enabled.", reason: "api_rejected" });
+              }
+              return JSON.stringify({ error: `Worktree creation failed: ${msg}`, reason: "api_rejected" });
+            }
+            if (!wtResult?.directory) {
+              return JSON.stringify({ error: "Worktree creation returned no directory.", reason: "api_rejected" });
+            }
+            sessionDir = wtResult.directory;
+            createdWorktreeDir = wtResult.directory;
+          } else {
+            // Validate the given path is a git worktree of this project.
+            try {
+              const dotGitPath = path.join(args.workspace, ".git");
+              const stat = fs.statSync(dotGitPath);
+              if (stat.isFile()) {
+                // .git file in worktrees contains "gitdir: <path>" pointing
+                // back to the main repo's .git directory.
+                const content = fs.readFileSync(dotGitPath, "utf8").trim();
+                if (!content.startsWith("gitdir:")) {
+                  return JSON.stringify({ error: `Path "${args.workspace}" has an invalid .git file — not a git worktree.`, reason: "validation_failed" });
+                }
+                // Verify the gitdir points to a worktrees/ subdirectory of
+                // the main repo's .git directory (basic sanity check).
+                const gitdir = content.slice("gitdir:".length).trim();
+                if (!gitdir.includes("worktrees")) {
+                  return JSON.stringify({ error: `Path "${args.workspace}" does not appear to be a worktree of this project.`, reason: "validation_failed" });
+                }
+              } else if (stat.isDirectory()) {
+                // A .git directory means it's a full repo clone, not a worktree.
+                return JSON.stringify({ error: `Path "${args.workspace}" is a full git repository, not a worktree.`, reason: "validation_failed" });
+              }
+            } catch {
+              return JSON.stringify({ error: `Path "${args.workspace}" is not a valid git worktree — .git not found.`, reason: "validation_failed" });
+            }
+            sessionDir = args.workspace;
+          }
+
+          // Soft warning at 5+ active worktrees (#1060 AC8).
+          if (engineClient.worktree) {
+            try {
+              const listResult = unwrap<Array<unknown>>(await engineClient.worktree.list({ query: { directory: ctx.directory } }));
+              if (Array.isArray(listResult) && listResult.length >= 5) {
+                worktreeWarning = `\nNote: this project already has ${listResult.length} active worktrees. Consider cleaning up unused ones.`;
+              }
+            } catch { /* list failure is non-blocking */ }
+          }
+        }
+
         const base = args.title ?? defaultTitle(args.prompt);
         const spawnMeta = { spawned_by: ctx.sessionID, spawned_depth: depth + 1 };
         const children: SpawnedChild[] = [];
@@ -2077,7 +2181,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
               const forked = unwrap<{ id?: string }>(
                 await engineClient.session.fork({
                   path: { id: ctx.sessionID },
-                  query: { directory: ctx.directory },
+                  query: { directory: sessionDir },
                   body: {},
                 }),
               );
@@ -2088,13 +2192,13 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
                 // Tolerated failure: the child still runs, it just won't
                 // auto-open — the summary below lists it either way.
                 await engineClient.session
-                  .update({ path: { id }, query: { directory: ctx.directory }, body: { metadata: spawnMeta } })
+                  .update({ path: { id }, query: { directory: sessionDir }, body: { metadata: spawnMeta } })
                   .catch(() => undefined);
               }
             } else {
               const created = unwrap<{ id?: string }>(
                 await engineClient.session.create({
-                  query: { directory: ctx.directory },
+                  query: { directory: sessionDir },
                   body: {
                     title,
                     metadata: spawnMeta,
@@ -2125,7 +2229,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             } else {
               await engineClient.session.promptAsync({
                 path: { id },
-                query: { directory: ctx.directory },
+                query: { directory: sessionDir },
                 body: {
                   parts: [{ type: "text", text: args.prompt }],
                   ...(model ? { model } : {}),
@@ -2137,14 +2241,22 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
+          // Compensating delete: if we created a worktree but session
+          // creation failed, clean up the worktree (best-effort, #1060 AC5).
+          if (createdWorktreeDir && engineClient.worktree) {
+            try { await engineClient.worktree.remove({ query: { directory: createdWorktreeDir } }); } catch { /* best-effort */ }
+          }
           if (children.length > 0) return `${summarizeSpawned(children, args.mode)}\nStopped early: ${msg}`;
-          return `Cannot spawn: ${msg}`;
+          return JSON.stringify({ error: `Session creation failed: ${msg}`, reason: "session_failed" });
         }
         // The routing note rides the dispatch summary (observability clause:
         // ambient when ignored, inspectable on click) — never in the
         // zero-config case, where the summary stays byte-identical.
         const summary = summarizeSpawned(children, args.mode);
-        return routed.resolution ? `${summary}\n${routingSummaryLine(routed.resolution)}` : summary;
+        const parts = [summary];
+        if (worktreeWarning) parts.push(worktreeWarning);
+        if (routed.resolution) parts.push(routingSummaryLine(routed.resolution));
+        return parts.join("\n");
         });
       },
     },
