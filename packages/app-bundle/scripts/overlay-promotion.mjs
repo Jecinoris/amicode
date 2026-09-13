@@ -26,7 +26,7 @@ const REPO_ROOT = join(PKG_ROOT, "..", "..")
 const DEFAULT_TARGET = join(PKG_ROOT, "overlay")
 const DEFAULT_MANIFEST = join(PKG_ROOT, "manifest.json")
 const DEFAULT_SOURCE_BRANCH = "local/amicode"
-const OVERLAY_PATHS = ["packages/app", "packages/ui", "packages/session-ui", "packages/schema", "packages/core", "packages/sdk"]
+const OVERLAY_PATHS = ["packages/app", "packages/ui", "packages/session-ui", "packages/schema", "packages/core", "packages/sdk", "packages/opencode"]
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -250,7 +250,7 @@ function promote({ source, revision, baseRef, target, manifestPath, branch, exce
 
     const manifest = {
       schema: 5,
-      scope: "complete fork-vs-base delta of packages/{app,ui,session-ui,schema,core,sdk}",
+      scope: "complete fork-vs-base delta of packages/{app,ui,session-ui,schema,core,sdk,opencode}",
       fork_ref: previous?.fork_ref ?? branch,
       fork_tag: previous?.fork_tag ?? null,
       fork_sha: revision,

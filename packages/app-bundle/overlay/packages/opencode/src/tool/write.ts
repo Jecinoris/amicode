@@ -1,0 +1,144 @@
+import { Schema } from "effect"
+import * as path from "path"
+import { Effect } from "effect"
+import * as Tool from "./tool"
+import { LSP } from "@/lsp/lsp"
+import { createTwoFilesPatch, diffLines } from "diff"
+import DESCRIPTION from "./write.txt"
+import { EventV2Bridge } from "@/event-v2-bridge"
+import { FileSystem } from "@opencode-ai/core/filesystem"
+import { Watcher } from "@opencode-ai/core/filesystem/watcher"
+import { Format } from "../format"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { InstanceState } from "@/effect/instance-state"
+import { Snapshot } from "@/snapshot"
+import { ExternalDiff } from "@/session/external-diff"
+import { trimDiff } from "./edit"
+import { assertExternalDirectoryEffect } from "./external-directory"
+import * as Bom from "@/util/bom"
+
+const MAX_PROJECT_DIAGNOSTICS_FILES = 5
+
+export const Parameters = Schema.Struct({
+  content: Schema.String.annotate({ description: "The content to write to the file" }),
+  filePath: Schema.String.annotate({
+    description: "The absolute path to the file to write (must be absolute, not relative)",
+  }),
+})
+
+export const WriteTool = Tool.define(
+  "write",
+  Effect.gen(function* () {
+    const lsp = yield* LSP.Service
+    const fs = yield* FSUtil.Service
+    const events = yield* EventV2Bridge.Service
+    const format = yield* Format.Service
+
+    return {
+      description: DESCRIPTION,
+      parameters: Parameters,
+      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const instance = yield* InstanceState.context
+          const filepath = path.isAbsolute(params.filePath)
+            ? params.filePath
+            : path.join(instance.directory, params.filePath)
+          const external = yield* assertExternalDirectoryEffect(ctx, filepath)
+
+          const exists = yield* fs.existsSafe(filepath)
+          const source = exists ? yield* Bom.readFile(fs, filepath) : { bom: false, text: "" }
+          const next = Bom.split(params.content)
+          const desiredBom = source.bom || next.bom
+          const contentOld = source.text
+          const contentNew = next.text
+
+          const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, contentNew))
+          yield* ctx.ask({
+            permission: "edit",
+            patterns: [path.relative(instance.worktree, filepath)],
+            always: ["*"],
+            metadata: {
+              filepath,
+              diff,
+            },
+          })
+          const reservation = external
+            ? ExternalDiff.prepare({ sessionID: ctx.sessionID, files: [filepath] })
+            : undefined
+
+          // Compute filediff for the Files Changed panel (same pattern as edit.ts)
+          let additions = 0
+          let deletions = 0
+          for (const change of diffLines(contentOld, contentNew)) {
+            if (change.added) additions += change.count || 0
+            if (change.removed) deletions += change.count || 0
+          }
+          const filediff: Snapshot.FileDiff = {
+            file: filepath,
+            patch: diff,
+            additions,
+            deletions,
+          }
+
+          // Push filediff mid-execution so the UI updates before the tool completes
+          yield* ctx.metadata({
+            metadata: {
+              diff,
+              filediff,
+              diagnostics: {},
+            },
+          })
+
+          yield* Effect.gen(function* () {
+            yield* fs.writeWithDirs(filepath, Bom.join(contentNew, desiredBom))
+            let settled = contentNew
+            if (yield* format.file(filepath)) {
+              settled = yield* Bom.syncFile(fs, filepath, desiredBom)
+            }
+            if (reservation) ExternalDiff.commit({ sessionID: ctx.sessionID, reservation })
+          }).pipe(
+            Effect.onError(() =>
+              Effect.sync(() => {
+                if (reservation) ExternalDiff.abort({ sessionID: ctx.sessionID, reservation })
+              }),
+            ),
+          )
+          yield* events.publish(FileSystem.Event.Edited, { file: filepath })
+          yield* events.publish(Watcher.Event.Updated, {
+            file: filepath,
+            event: exists ? "change" : "add",
+          })
+
+          let output = "Wrote file successfully."
+          yield* lsp.touchFile(filepath, "document")
+          const diagnostics = yield* lsp.diagnostics()
+          const normalizedFilepath = FSUtil.normalizePath(filepath)
+          let projectDiagnosticsCount = 0
+          for (const [file, issues] of Object.entries(diagnostics)) {
+            const current = file === normalizedFilepath
+            if (!current && projectDiagnosticsCount >= MAX_PROJECT_DIAGNOSTICS_FILES) continue
+            const block = LSP.Diagnostic.report(current ? filepath : file, issues)
+            if (!block) continue
+            if (current) {
+              output += `\n\nLSP errors detected in this file, please fix:\n${block}`
+              continue
+            }
+            projectDiagnosticsCount++
+            output += `\n\nLSP errors detected in other files:\n${block}`
+          }
+
+          return {
+            title: path.relative(instance.worktree, filepath),
+            metadata: {
+              diagnostics,
+              diff,
+              filediff,
+              filepath,
+              exists: exists,
+            },
+            output,
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
