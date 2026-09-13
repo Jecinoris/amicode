@@ -131,7 +131,9 @@ reference the in-flight casts? Append the audit row to §9.
 
 1. **Re-read the ledger** — from disk, never from memory.
 2. **Hypothesis queue thin?** Cast the **hypothesizer** (read-only subagent): ranked
-   hypotheses + a spec-card draft. Parent picks the winner.
+   hypotheses + a spec-card draft. Parent picks the winner. The hypothesizer reads
+   the findings ledger (`amicode/skills-integrity/`, personal vault) as a prior —
+   known-bad recipes don't become proposed approaches.
 3. **Spec gate (deliberate):** file the spec card to `<project>/config/specs/`, run
    `amico spec review <path>` — resolve blocking findings, re-run (round budget 3).
    `--allow-unreviewed` is FORBIDDEN for launch-shaped work (spends compute); if compile
@@ -144,9 +146,14 @@ reference the in-flight casts? Append the audit row to §9.
    you — judges a fidelity claim; LLM judgment is confined to drafting criteria and
    interpreting results, adversarially reviewed, human-owned at promotion.
 6. **Cast the analyzer** (read-only): raw-artifact-grounded insights, a proposed ledger
-   delta, next-hypothesis seeds.
+   delta, next-hypothesis seeds. The analyzer's duties include the skill-friction
+   check: scan raw artifacts for instructions-vs-reality mismatches (→ finding) and
+   repeated un-skilled idioms (→ `proposal`-type finding, a new-skill candidate,
+   provenance-tagged with sessions/artifacts).
 7. **Commit the ledger update** (sole writer): H-table row, loop-log row, §3 state, next
    queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
+   The update also carries the campaign's **skill delta** row — findings filed, skills
+   touched, proposals pending — so the loop's own improvement is part of its record.
 8. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
    the protocol does not otherwise try to time compaction (see below).
 

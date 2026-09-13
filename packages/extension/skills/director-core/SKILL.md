@@ -4,7 +4,7 @@ description: The canonical director-core protocol — the one loop every autonom
 agents: [orchestrator]
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Director core — the canonical loop protocol
@@ -27,7 +27,10 @@ Any campaign is one loop: **plan → dispatch through gates → analyze → reco
   gates over what comes back. The gates are a mode's entire personality.
 - **Analyze** — ground the result in raw artifacts and derive what it
   changes: verdicts, ledger deltas, next seeds.
-- **Record** — commit the ledger update; a loop's output is ledger state.
+- **Record** — commit the ledger update; a loop's output is ledger state. The
+  update includes the campaign's skill delta (findings filed, skills touched,
+  proposals pending). Briefs may carry the front-line findings rule:
+  skill-reality conflicts are findings, not workarounds.
 
 The differences between campaigns live entirely in the phase graph and the
 gates — never in the loop, the memory, or the director.
