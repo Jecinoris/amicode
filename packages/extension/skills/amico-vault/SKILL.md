@@ -98,6 +98,17 @@ Route every note-write by intent:
 
 **`route_intent` fallback:** if the routed target isn't mounted on this machine (no engagement vault here; not a member of the project vault), write to the **personal** vault and stamp frontmatter `route_intent: <kind>` so it can be re-homed later. Never silently drop a write or write to the wrong tier.
 
+### Vault-path references (role, not name)
+
+How vault paths are written down — in notes, specs, skills, and examples — is a rule of record, not a style preference: **reference mounts by role, never by name.**
+
+- The **personal** mount by **role** — "the personal vault", resolved from the mount stack — never by its directory or marker name.
+- The **team** mount by **kind** — "the team mount". A concrete instance (`armonissima`) may appear in an example, labeled as an instance — never as the identifier.
+- The ops tree only ever as `$AMICO_OPS/…`.
+- **Never a raw home path embedding a vault or repo name** in prose or examples — those are the ones that rot on renames. Proof case: the 2026-08-21 personal-vault rename (`vault-aaron` → `armonia-aaron-trowbridge`), whose aftermath — clients silently riding the rename redirect — is exactly the silent rot this rule exists to prevent.
+
+The skills lint's `[vpath]` rule (`lint-skills.mjs`, #1100) flags the known-rotted shapes mechanically; this section is the doctrine it serves.
+
 ### Visibility and the two-note authoring pattern
 
 `visibility: local | team | public` (default `local`). Visibility is the federation gate: **only `team`/`public` notes are eligible for promotion to the company vault; `local` notes never leave their mount.**
