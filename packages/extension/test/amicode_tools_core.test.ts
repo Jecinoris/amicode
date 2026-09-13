@@ -42,6 +42,7 @@ const EXPECTED_TOOLS = [
   "amicode_report_attempt_error",
   "amicode_report_fallback",
   "amicode_session",
+  "amicode_workspace",
   "amicode_veloce",
 ];
 

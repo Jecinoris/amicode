@@ -347,6 +347,12 @@ export const AmicodeTools = async (input: unknown) => {
           promptAsync: (o: unknown) => Promise<unknown>;
           command: (o: unknown) => Promise<unknown>;
         };
+        worktree?: {
+          create: (o: unknown) => Promise<unknown>;
+          list: (o?: unknown) => Promise<unknown>;
+          remove: (o: unknown) => Promise<unknown>;
+          reset: (o: unknown) => Promise<unknown>;
+        };
       }
     | undefined;
   return {
@@ -2130,6 +2136,92 @@ returns an error, fix \`js\`/the fields and call it again.
         const summary = summarizeSpawned(children, args.mode);
         return routed.resolution ? `${summary}\n${routingSummaryLine(routed.resolution)}` : summary;
         });
+      },
+    },
+
+    amicode_workspace: {
+      description:
+        "List, remove, or reset git worktrees used for agent workspace isolation. " +
+        "Three actions: `list` shows all active worktrees with their branches; " +
+        "`remove` deletes a worktree by directory; `reset` resets a worktree to " +
+        "the default branch. Requires the experimental worktrees feature to be enabled.",
+      args: {
+        action: {
+          type: "string",
+          description: "list | remove | reset",
+        },
+        directory: {
+          type: ["string", "null"],
+          description: "The worktree directory (required for remove/reset, ignored for list).",
+        },
+      },
+      async execute(a: { action: string; directory?: string | null }) {
+        if (!engineClient) {
+          return "Cannot manage workspaces: the engine did not hand this plugin a server client (legacy load path).";
+        }
+        if (!engineClient.worktree) {
+          return "Workspace management requires the experimental worktrees feature to be enabled.";
+        }
+        const wt = engineClient.worktree;
+
+        if (a.action === "list") {
+          try {
+            const raw = unwrap<Array<{ directory?: string; branch?: string }>>(await wt.list());
+            const items = Array.isArray(raw) ? raw : [];
+            if (items.length === 0) return "No active worktrees.";
+            const lines = items.map((w) => {
+              const branch = w.branch ? ` (branch: ${w.branch})` : "";
+              return `- ${w.directory ?? "(unknown)"}${branch}`;
+            });
+            return `${items.length} active worktree${items.length === 1 ? "" : "s"}:\n${lines.join("\n")}`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to list worktrees: ${msg}`;
+          }
+        }
+
+        if (a.action === "remove") {
+          if (!a.directory || a.directory.trim() === "") {
+            return "Cannot remove: directory parameter is required.";
+          }
+          try {
+            await wt.remove({ directory: a.directory });
+            return `Removed worktree at ${a.directory}.`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/not found/i.test(msg)) {
+              return `No worktree found at ${a.directory}.`;
+            }
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to remove worktree: ${msg}`;
+          }
+        }
+
+        if (a.action === "reset") {
+          if (!a.directory || a.directory.trim() === "") {
+            return "Cannot reset: directory parameter is required.";
+          }
+          try {
+            await wt.reset({ directory: a.directory });
+            return `Reset worktree at ${a.directory} to default branch.`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/not found/i.test(msg)) {
+              return `No worktree found at ${a.directory}.`;
+            }
+            if (/feature|not enabled|experimental|worktree/i.test(msg)) {
+              return "Workspace management requires the experimental worktrees feature to be enabled.";
+            }
+            return `Failed to reset worktree: ${msg}`;
+          }
+        }
+
+        return `Unknown action "${a.action}". Valid actions: list, remove, reset.`;
       },
     },
 
