@@ -54,20 +54,27 @@ map   = QickChannelMap([QickGenChannel(0, 5e9; i_drive = 1)]; n_drives = 1)
 model = MeasurementModel(:ψ̃, [populations], [N])
 qexp  = QickExperiment(QickBackend(soc, map, [N]); measurement_model = model)
 
-ptp = PulseTuningProblem(qcp, qexp, model; R_tr = (u = 0.1,), Q_meas = 10.0)
+ptp = PulseTuningProblem(qcp, qexp, model)
 solve!(ptp; max_iter = 10)
 ```
 
 - `dac_rate` is the mock DAC grid; readout converges to the continuum as it rises (translation
   is faithful, not lossy) — it is not bit-identical to a coarse-knot direct sim.
 - Swap `MockQickSoc` → `PyQickSoc` for a real board; nothing else in the loop changes.
+- **Intonato ≥ v0.4:** the `R_tr` / `Q_meas` constructor kwargs are **removed** — trust-region
+  weighting belongs to the strategy (Intonatissimo's subproblem constructors take `R_tr`) and
+  task weighting to the whitening `W_task`; the chassis constructor takes neither.
 
 ## The tuning strategy is where public stops
 
 `PulseTuningProblem` runs with the **public no-op `IdentityStrategy`** by default — the chassis
 composes and the loop *runs* through the seam, but a no-op tuner does not drive convergence.
-**Algorithmic convergence** (matching hardware measurements iteration-over-iteration) needs a
-concrete tuning strategy, which ships as the **entitlement-gated** `intonatissimo` tier — see
+Intonato also ships one **public** concrete strategy: `LowRankHessianStrategy` — measured-gradient
+Newton in the low-rank principal subspace of the model-cost Hessian, where the device model
+supplies the directions/curvatures and the gradient is measured on the device by central finite
+differences along each direction. **Algorithmic convergence** (matching hardware measurements
+iteration-over-iteration) beyond that needs a concrete tuning strategy, which ships as the
+**entitlement-gated** `intonatissimo` tier — see
 the in-repo `intonatissimo` skill if you hold that entitlement. Without it, the public path is:
 drive the backend, roll the mock, validate the seam.
 

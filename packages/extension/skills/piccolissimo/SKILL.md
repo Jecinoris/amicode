@@ -103,12 +103,16 @@ guidance, all at the `solve!`/constructor level:
 - **Linear-drive models** (affine drive coefficients — the standard transmon
   bilinear form) are the GN path's home regime: keep the defaults.
 - **Nonlinear-drive models** (models with drive coefficients like $|\alpha|^2$
-  — dispersive transmon-cavity) converge poorly on the GN spline path. Two
-  configuration escapes:
-  - `solve!(qcp; eval_hessian = false)` — switches Ipopt to L-BFGS, which
-    routinely fixes the stall on these models;
-  - or solve the same problem on the exponential integrator, whose second-order
-    path is exact for its piecewise-constant controls.
+  — dispersive transmon-cavity) converge poorly on the GN spline path. The
+  composed doctrine: **exact Hessian when feasible; L-BFGS as the stall
+  escape.** Concretely:
+  - when the exact-Hessian path is feasible for your model, keep it — or move
+    the problem to the exponential integrator, whose second-order path is
+    exact for its piecewise-constant controls;
+  - when the exact path stalls, `solve!(qcp; eval_hessian = false)` — switches
+    Ipopt to L-BFGS, which routinely fixes the stall on these models. An
+    L-BFGS escape is a stall fix, not a verified answer: **always follow it
+    with an independent rollout (`simulate`)** before trusting the result.
 - **Ket/multiket problems** can pass `exact_hessian = true` to the
   `SplineIntegrator` constructor to request the exact second-order sensitivity
   path. The unitary path does not offer this flag.
