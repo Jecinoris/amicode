@@ -451,6 +451,7 @@
   "lint:skills": "node scripts/lint-skills.mjs --known scripts/lint-skills-known.txt",
  "smoke:fleet": "node scripts/fleet_beta_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs",
+    "build:binary": "node scripts/build_binary.mjs",
     "opencode:dev": "node scripts/opencode_dev.mjs",
     "opencode:build": "node scripts/opencode_dev.mjs build",
     "opencode:pin": "node scripts/opencode_dev.mjs pin",
