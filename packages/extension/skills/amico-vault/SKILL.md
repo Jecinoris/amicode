@@ -105,7 +105,7 @@ How vault paths are written down — in notes, specs, skills, and examples — i
 - The **personal** mount by **role** — "the personal vault", resolved from the mount stack — never by its directory or marker name.
 - The **team** mount by **kind** — "the team mount". A concrete instance (`armonissima`) may appear in an example, labeled as an instance — never as the identifier.
 - The ops tree only ever as `$AMICO_OPS/…`.
-- **Never a raw home path embedding a vault or repo name** in prose or examples — those are the ones that rot on renames. Proof case: the 2026-08-21 personal-vault rename (`vault-aaron` → `armonia-aaron-trowbridge`), whose aftermath — clients silently riding the rename redirect — is exactly the silent rot this rule exists to prevent.
+- **Never a raw home path embedding a vault or repo name** in prose or examples — those are the ones that rot on renames. Proof case: the 2026-08-21 personal-vault rename (the personal vault's directory name changed under it), whose aftermath — clients silently riding the rename redirect — is exactly the silent rot this rule exists to prevent. This doctrine obeys its own rule: the rotted names are deliberately NOT reproduced here — the mechanical `[vpath]` rule cannot tell a proof case from a violation, and that is the point.
 
 The skills lint's `[vpath]` rule (`lint-skills.mjs`, #1100) flags the known-rotted shapes mechanically; this section is the doctrine it serves.
 

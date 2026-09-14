@@ -251,10 +251,19 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
   it("verb exit 0 + role client → the fleet branch with the parsed port (proceeds past the topology gate)", () => {
     fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
     const r = runScript(INSTALL, ["--check"], installEnv());
+    // The BRANCH proof: the parsed role + port flowed through — never the standalone skip.
     expect(r.out).toMatch(/fleet role: client \(port: 4096\)/);
-    // --check then fails on the missing installed guard — the TOPOLOGY branch was taken
-    expect(r.code).toBe(1);
-    expect(r.out).toMatch(/guard not installed/);
+    expect(r.out).not.toMatch(/fleet checks skipped|nothing to install/);
+    // The terminal outcome is platform-specific BY DESIGN: on darwin, --check
+    // fails on the missing installed guard; on non-darwin the installer skips
+    // the host check ("the fleet is a darwin fleet") and completes green.
+    if (process.platform === "darwin") {
+      expect(r.code).toBe(1);
+      expect(r.out).toMatch(/guard not installed/);
+    } else {
+      expect(r.code).toBe(0);
+      expect(r.out).toMatch(/host check skipped/);
+    }
   });
 
   it("verb exit 75 → the bootstrap exception: base-standalone STATED with the pointer, exit 0 (identical to CLI-absent)", () => {
