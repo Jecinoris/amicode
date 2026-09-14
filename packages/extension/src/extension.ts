@@ -96,8 +96,9 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
-import { handshakePath, deleteHandshake, serverLogPath } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
+import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -1596,6 +1597,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getSpawnEnv: () => currentSpawnEnv,
     channel: opencodeChannel,
     getAmicodeService: () => amicodeService,
+    // #1149 (ADR 0020): the terminal reads the server password from the
+    // handshake (the surviving server's actual credential), not the stale
+    // spawn environment. After a window reload the spawn env carries the OLD
+    // boot's password; the handshake carries the LIVE server's.
+    getHandshakePassword: () => {
+      const hs = readHandshake();
+      return hs.status === "ok" ? hs.record.password : undefined;
+    },
   });
 
   // Canonical-opencode runtime updater (#451 M4): managed install under
@@ -2273,6 +2282,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
+    // #1149 (ADR 0020): Stop server — the deliberate kill alongside Restart.
+    // Gated on in-flight turns (warns first). Always clears the handshake
+    // (#1144's primitive) so no stale record survives the kill.
+    vscode.commands.registerCommand("amicode.stopServer", () =>
+      void stopServer({
+        // In-flight turn detection: wired to the SSE event stream's liveness
+        // state. A "live" stream means the server is actively communicating;
+        // more granular per-session turn tracking is a future refinement.
+        hasInFlightTurns: () => sseClient?.sseState === "live",
+        showWarning: (msg, ...items) =>
+          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
+        stop: async () => {
+          await serverManager?.stop();
+          statusBar?.setServerReady(false);
+          opencodeReadyUrl = undefined;
+          opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
+        },
+        deleteHandshake: () => deleteHandshake(),
+      }),
+    ),
     // Issue #573: skill provider changes take effect on next session start.
     // Live hot-reload (rewriting AGENTS.md while the server reads it) was
     // causing crashes — deferred until the engine supports atomic reload.
