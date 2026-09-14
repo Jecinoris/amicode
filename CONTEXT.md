@@ -182,6 +182,20 @@ _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-ap
 The multi-document file workspace in the side panel. Holds zero or more files as inner tabs, each rendering its content (markdown rendered with a toggle to edit; text/code files in a CodeMirror editor; images and PDFs inline). Files arrive via Sidebar single-click or a Chat file pill and accumulate as tabs — each closeable and drag-reorderable; opening an already-open file focuses its existing tab rather than duplicating it. A breadcrumb bar under each pane's tab strip shows the active file's project-relative path with interactive sibling navigation. Supports recursive split panes via edge-drop: dragging a tab toward a pane's edge divides the view, and each resulting pane keeps its own tab bar, breadcrumb, zoom, and preview/edit toggle. Empty panes auto-collapse; a minimum pane dimension is enforced so splits can't shrink below a usable size. Opens and activates automatically when the first file is selected; shows a placeholder when no file is open. For committed editing, double-click the Sidebar entry to open a native VS Code tab.
 _Avoid_: Editor (Preview is a multi-document viewer, not a primary editor — committed editing belongs in a native VS Code tab), File browser (the Sidebar is still the primary project-wide file tree; the breadcrumb is a contextual sibling-navigation aid scoped to the open file, not a second tree)
 
+### Developer tooling
+
+**Rebuild (local)**:
+One of the two developer-tools Rebuild buttons. Builds the amicode binary and extension from the current working tree exactly as it sits — no git checkout, no pull — so a developer's in-progress edits are what gets built. The inner-loop "build what I have" action. Its request mode is `local`.
+_Avoid_: Rebuild Remotely (retired wording), local build (as the concept name — it is a Rebuild mode)
+
+**Rebuild (from main)**:
+The other developer-tools Rebuild button. Syncs the amicode repo to `origin/main` (fetch + checkout main + fast-forward-only pull) and then builds — the "reset to the shared tip and build that" action. Its request mode is `main`. The two Rebuild buttons diverge only at this git step; every later build phase is identical.
+_Avoid_: Rebuild Remotely / Rebuild from Latest (retired wordings), remote rebuild (the fork-era `remote` mode is retired)
+
+**binary live-swap (retired)**:
+The retired mechanism by which the developer-tools "opencode repo path" field resolved a fork binary from a path on disk and set the `opencodeBinary` override to it, restarting the server. Retired with fork absorption (#1091/#1115): the binary is now produced by the in-repo overlay build, so the full local Rebuild is the single dev build path. The general `opencodeBinary` override itself survives — it is consumed by the boot/health paths and still cleared on the developer-mode toggle-off; only the path-field-fed swap is gone.
+_Avoid_: opencode repo path field (removed), binary override (the general override is not the live-swap)
+
 ### Orthogonal axes
 
 **Domain Pack**:

@@ -15,7 +15,7 @@
  * - fork clone: gh repo clone harmoniqs/opencode (local mode only)
  */
 
-import type { ExecResult } from "./main_source_resolver";
+import type { ExecResult } from "./exec_types";
 
 export type ExecFn = (cmd: string, cwd?: string) => Promise<ExecResult>;
 

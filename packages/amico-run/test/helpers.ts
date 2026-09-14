@@ -54,9 +54,13 @@ export const GIT_DATE_ENV = {
   GIT_COMMITTER_NAME: "doctor fixture",
   GIT_COMMITTER_EMAIL: "fixture@example.test",
 };
-/** Far-future / far-past printed build dates (embedded in fake binaries). */
-export const FUTURE_BUILD = "0.0.0-local/amicode-209901010000";
-export const PAST_BUILD = "0.0.0-local/amicode-202601010000";
+/** Far-future / far-past printed build dates (embedded in fake binaries).
+ *  S5: versions now carry meaningful version-prefix numbers for the
+ *  version-based staleness comparison (replaces the date-based comparison
+ *  against fork HEAD). FUTURE_BUILD's versionPrefix ("1.18.10") matches
+ *  the default upstream version; PAST_BUILD's ("1.18.8") is behind it. */
+export const FUTURE_BUILD = "1.18.10-overlay-209901010000";
+export const PAST_BUILD = "1.18.8-overlay-202601010000";
 
 let trackedDirs: string[] = [];
 
@@ -464,6 +468,11 @@ export function ctxForWorld(w: DoctorWorld, over: Partial<SurfaceContext> = {}):
     // hermetic default: a fixture that forgets to stub running-process
     // discovery gets server-down, never the REAL machine's process
     discoverRunning: async () => null,
+    // S5: provide the upstream version that the probes now read instead of
+    // fork release tags. "1.18.10" matches the vendored binary's version in
+    // the fixture world (it prints "1.18.10", and the fork release tag was
+    // v1.18.10-amicode.15 with base 1.18.10).
+    upstreamVersion: "1.18.10",
   };
   return { ...base, ...over };
 }

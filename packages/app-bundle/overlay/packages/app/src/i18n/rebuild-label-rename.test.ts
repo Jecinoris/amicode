@@ -51,3 +51,25 @@ describe("devtools rebuild-remotely label rename (#940)", () => {
     expect(dict["settings.general.row.devTools.rebuildRemotely"]).toBe(NEW_LABEL)
   })
 })
+
+// ============================================================================
+// The "opencode repo path" developer-tools field is retired in the
+// overlay-build world (#1115): the fork is absorbed, so there is no separate
+// opencode repo to point at. Every locale that carried the row's keys must
+// drop them — a partial removal would leave a dangling key referenced by no
+// UI, or (worse) a stale key the UI still reads.
+// ============================================================================
+
+describe("devtools opencode-path row key removal (#1115)", () => {
+  const OPENCODE_PATH_KEY = ["settings.general.row", "opencodePath"].join(".")
+
+  test("no locale file carries the retired opencode-path row key", () => {
+    const localeFiles = readdirSync(i18nDir)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .map((name) => join(i18nDir, name))
+    const offenders = localeFiles.filter((file) =>
+      readFileSync(file, "utf8").includes(OPENCODE_PATH_KEY),
+    )
+    expect(offenders).toEqual([])
+  })
+})

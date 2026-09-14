@@ -17,10 +17,9 @@ Interview flows are data (`packages/extension/scores/`). Schemas: `packages/sche
 
 1. `node >= 20`, `corepack enable` (repo pins `pnpm@9.15.9` — never install pnpm globally)
 2. Julia ≥ 1.12 via juliaup: `curl -fsSL https://install.julialang.org | sh`
-3. `gh auth status` succeeds AND `gh repo view harmoniqs/opencode` succeeds
-   (private fork mirror — the vendored binary downloads from its release; if 404, stop
-   and tell the human to request access from Aaron)
-4. An LLM provider for the chat: `opencode auth login` after the binary is vendored
+3. `gh auth status` succeeds (for PRs and issues)
+4. bun (for compiling the engine binary): `curl -fsSL https://bun.sh/install | bash`
+5. An LLM provider for the chat: `opencode auth login` after the binary is built
    (or `ANTHROPIC_API_KEY` in the environment). Without one, the free anonymous tier is
    used — functional but flaky; do not judge interview-quality bugs on the free tier.
 
@@ -30,11 +29,9 @@ Interview flows are data (`packages/extension/scores/`). Schemas: `packages/sche
 git clone git@github.com:harmoniqs/amicode.git && cd amicode
 corepack enable && pnpm install               # check: exits 0, lockfile untouched
 pnpm -r build                                 # check: packages/extension/dist/extension.js exists
-pnpm --filter amicode run fetch:opencode   # check: vendor/opencode/<platform>/opencode exists
-                                              # Default lock source=release: downloads the pinned,
-                                              # features-ON binary from the harmoniqs/opencode release.
-                                              # No clone, no bun. Only changing the fork needs those —
-                                              # see "Changing opencode (the vendored fork)" below.
+pnpm --filter amicode run build:binary    # check: vendor/opencode/<platform>/opencode exists
+                                              # Compiles the engine from packages/app-bundle/overlay/.
+                                              # Requires bun. No external fork or download needed.
 pnpm --filter amicode test                 # check: 200+ tests pass, 0 fail
 bash packages/extension/scripts/install.sh    # Julia project (~15 min first precompile) + VSIX + lab.toml
 node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico-run, creds)
@@ -46,9 +43,8 @@ Fleet + vendor + lock drift is how the last 3 fleet breaks hid (stale `main` beh
 
 ```bash
 pnpm sync              # check only: git fetch + gh auth + pnpm dry-run + fleet gate (no writes)
-pnpm sync --fix        # also writes: git pull --ff-only, pnpm install, fetch:opencode (pinned, --release), fleet install
-pnpm sync --fork       # fork helper: clone status + pnpm opencode:build / opencode:pin help
-# or: bash scripts/repo-sync.sh --check / --fix / --fork
+pnpm sync --fix        # also writes: git pull --ff-only, pnpm install, build:binary, fleet install
+# or: bash scripts/repo-sync.sh --check / --fix
 # VS Code: Command Palette → Amicode: Repo Sync (runs --fix in a terminal)
 ```
 
@@ -75,16 +71,12 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 
 - **Dev host**: open this repo in VS Code, F5 ("Run Extension (amicode)"). The opencode
   server runs on **fixed port 43117** (`amicode.opencodePort`); Remote-SSH users forward it once.
-- **The vendored binary is a build artifact** — never edit it; it comes from
-  `harmoniqs/opencode` (thin fork, patch stack in its `AMICODE-PATCHES.md`). Rebrand/UI work
-  happens THERE, product logic lives HERE in config/plugin/scores (Layer 0). To change the
-  fork, see "Changing opencode (the vendored fork)" below.
-- **`packages/app-bundle/overlay/` is a read-only tracking copy** — never edit the overlay
-  directly. It is copied FROM the opencode fork, never TO it, and is not a build input. To
-  change any app-layer file (components, pages, styles), edit the fork
-  (`~/harmoniqs/opencode` or `$AMICODE_OPENCODE_SRC`), rebuild with
-  `pnpm --filter amicode opencode:build`, then `sync:apply`. Edits to the overlay
-  silently vanish on the next sync.
+- **The vendored binary is a build artifact** — never edit it; it is compiled from
+  `packages/app-bundle/overlay/` (the engine source tree). To change the engine,
+  see "Changing the engine (opencode patches)" below.
+- **`packages/app-bundle/overlay/` IS the source of truth** — edit it directly.
+  This is the canonical engine source tree committed in this repo. Run
+  `pnpm --filter amicode run build:binary` after editing to compile a new binary.
 - `packages/extension/opencode-plugin/` executes inside opencode's Bun runtime — it is NOT
   part of the extension bundle; keep it dependency-free; exactly one export.
 - `packages/extension/scores/` — interview flows as data. New user path = new `SCORE.md`
@@ -103,51 +95,23 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
   AGENTS.md score section, visible to every agent.
 - Never commit to `main`; branch + PR.
 
-## Changing opencode (the vendored fork)
+## Changing the engine (opencode patches)
 
-Default vendoring is `release` — `pnpm install` / `package` / F5 download the pinned,
-features-ON binary; **no clone or bun needed**. You enter source mode only when you are
-changing the fork, and you do it by running a command — **never** by editing the committed
-`opencode.lock.json` `source` field (committing `local` forces a clone+bun build on everyone
-and breaks fork-PR CI).
+The engine source lives in `packages/app-bundle/overlay/packages/opencode/`.
+Edit it in place — the overlay IS the source of truth (there is no external fork).
 
-1. Clone the fork as a sibling and install bun:
-   `git clone git@github.com:harmoniqs/opencode.git ../opencode` (or set `AMICODE_OPENCODE_SRC`);
-   `curl -fsSL https://bun.sh/install | bash`.
-2. Edit `../opencode`, then rebuild + re-vendor: **`pnpm --filter amicode opencode:build`**
-   (builds with `OPENCODE_CHANNEL=dev` → amicode UI gate ON; `--any-ref` so your in-progress
-   clone is accepted). Reload the Extension Dev Host (Cmd/Ctrl+R) to pick it up. This rebuilds
-   the **compiled binary** — the only path that shows web-app surfaces (`packages/app`: home
-   cards, v2 titlebar, draft flow), whose channel define is baked at build time (no `serve`-time
-   hot path for those).
-3. Ship it: push the opencode branch, tag a release (its workflow builds all three binaries and
-   gate-checks them), then **`pnpm --filter amicode opencode:pin <tag>`** here — it downloads
-   and sha256-verifies every asset and rewrites the lock. Commit the lock bump + PR.
-   Note `opencode:pin` only re-stamps platforms ALREADY in `opencode.lock.json` — adding a new
-   platform means hand-adding its `asset` key (with any placeholder sha) before pinning.
+1. Edit files under `packages/app-bundle/overlay/packages/opencode/`
+2. Run `pnpm --filter amicode run build:binary` to compile
+3. Reload the Extension Dev Host (Cmd/Ctrl+R) to pick up the new binary
+
+bun is required for compilation. The overlay is committed directly;
+there is no fork to push to.
 
 **Why `dev` matters:** every amicode surface is gated at runtime on
 `settings.general.newLayoutDesigns`, whose default is `VITE_OPENCODE_CHANNEL !== "prod"`. A binary
 built with `OPENCODE_CHANNEL=latest` (→ `"prod"`) compiles the features in but hides them.
-`opencode:build` and the release workflow both force `dev`; `scripts/assert_ui_gate.sh` fails
+The build script forces `dev`; `scripts/assert_ui_gate.sh` fails
 CI and release if a binary ever ships with the gate off.
-
-**Overlay sync:** `packages/app-bundle/overlay/` is a **tracking copy** of the fork's diff
-against upstream — it is NOT a build input (the binary builds from the fork directly). The fork
-is the source of truth for all app source files. **Never edit the overlay directly; never copy
-overlay → fork** for files that exist in both; that overwrites newer fork code with stale
-overlay snapshots.
-
-After editing the fork:
-```bash
-pnpm --filter @amicode/app-bundle sync:check -- --source ../opencode --revision <sha>
-pnpm --filter @amicode/app-bundle sync:apply -- --source ../opencode --revision <sha> --base <upstream-base>
-```
-`opencode:build` warns on drift but does not block. `sync:apply` is an explicit promotion,
-not a rebuild side effect: it requires a clean `local/amicode` checkout, regenerates the
-complete fork-vs-base file and deletion set, and updates manifest provenance atomically on
-the current review branch. `sync:check` is read-only and proves a committed overlay against
-one immutable fork revision.
 
 ## Releasing & publishing (amicode → Marketplace)
 
@@ -158,12 +122,10 @@ and never reaches end users.
 Version knobs that must agree: the **extension manifest** (`packages/extension/package.json`
 version) must equal the **tag base** (`v0.0.3` and `v0.0.3-alpha.5` both → `0.0.3`) — enforced by
 release.yml's version guard (a gate, not a bump; edit the manifest by hand when a cycle starts).
-The **vendored fork** version is a separate knob, bumped via `opencode:pin` (above).
 
 **`.github/workflows/release.yml`** — trigger: push any `v*` tag (or `workflow_dispatch` with
-`tag`). Rebuilds the tag's committed release pin into **seven** vsixes. It never resolves a fork
-branch or provisions a new binary, so an alpha and its promoted release carry the same payload.
-Four are installable — `amicode.vsix` (universal, all binaries), `amicode-linux-x64.vsix`,
+`tag`). Builds the engine binary from the overlay and packages **seven** vsixes. Four are
+installable — `amicode.vsix` (universal, all binaries), `amicode-linux-x64.vsix`,
 `amicode-linux-arm64.vsix`, `amicode-darwin-arm64.vsix` — and are the GitHub Release assets.
 Three are **cover packages** carrying NO binary — `win32-x64`, `win32-arm64`, `darwin-x64` —
 published to the Marketplace and nowhere else. A clean `vX.Y.Z` tag publishes all six
@@ -195,36 +157,20 @@ Needs the **`VSCE_PAT`** repo secret (an Azure DevOps PAT: org = all accessible,
 Marketplace → Manage, <=1yr expiry, so rotate). Open VSX is deferred — issue #176 (needs
 `OVSX_TOKEN`).
 
-**`.github/workflows/prepare-release-candidate.yml`** — run this on the release-preparation branch
-before cutting an alpha. It preflights the fine-grained `REPO_ACCESS_TOKEN`, builds and verifies a
-BETA fork release, then records its tag, commit, and hashes in `opencode.lock.json` on that branch.
-The alpha tag is cut only after that pin lands.
-
 **`.github/workflows/promote.yml`** — the deliberate "this alpha is good enough" act.
 `workflow_dispatch`, input `alpha_tag` (e.g. `v0.0.3-alpha.5`). Validates it (real pre-release
 tag, its clean `vX.Y.Z` not yet taken, every check run green on that commit), cuts the clean tag
 at the alpha's exact SHA, and dispatches release.yml. It does **not** touch the manifest; if the
 base was already promoted it fails and tells you to bump + start a fresh alpha cycle.
 
-**Candidate preparation provisions the fork binary.** The candidate workflow creates the next
-fork tag from `local/amicode`, dispatches its BETA-channel build, and records the verified result
-in the release-preparation branch before alpha. It requires **`REPO_ACCESS_TOKEN`** — a
-fine-grained PAT scoped only to `harmoniqs/opencode`, with Actions and Contents read/write and SSO
-authorization where required. Stable promotion has no cross-repository authority: it rebuilds only
-from the alpha tag's committed pin. Retrying a release rebuilds the same tag and safely refreshes
-its GitHub Release assets before retrying Marketplace targets.
-
-Typical cycle: bump manifest -> prepare BETA fork candidate and commit its pin -> push
-`v0.0.3-alpha.1..N` (internal prereleases) -> when one passes, **promote** it -> clean `v0.0.3`
--> Marketplace. The first promotion of a base needs no bump (alphas never hit the Marketplace, so
-the version is still free); re-promoting an already-published base does.
+Typical cycle: bump manifest → push `v0.0.3-alpha.1..N` (internal prereleases) → when one
+passes, **promote** it → clean `v0.0.3` → Marketplace. The first promotion of a base needs no
+bump (alphas never hit the Marketplace, so the version is still free); re-promoting an
+already-published base does.
 
 ## Known sharp edges
 
 - `test:slow` without `AMICO_TEST_JULIA_PROJECT` silently skips the Julia gates.
-- The vendor `.sha256` stamp is the ACTUAL binary hash; `.source` records provenance
-  (`local <ref>` or `release <repo>@<tag>`). Local-source installs always rebuild; a
-  release-mode run re-downloads whenever the stamp differs from the lock manifest.
 - Free-tier live e2e tiers are non-deterministic; a single tier-C failure is sampling noise.
 - Julia 1.12.x minor-version drift vs the pinned Manifest prints a warning and proceeds.
 - A tag pushed by CI's `GITHUB_TOKEN` does not fire `release.yml`'s `push` trigger (Actions'

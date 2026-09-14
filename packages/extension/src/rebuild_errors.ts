@@ -34,29 +34,28 @@ export const LOCK_FILE_MALFORMED = (detail: string) =>
     `Parse error: ${detail}`,
   ]);
 
-export const LOCK_MISSING_TAG = rebuildError(
-  "LOCK_NO_TAG",
-  "opencode.lock.json has no release tag — cannot identify the binary to download",
+export const LOCK_MISSING_BASE_COMMIT = rebuildError(
+  "LOCK_NO_BASE_COMMIT",
+  "opencode.lock.json has no base_commit — cannot identify the upstream canonical version",
   [
-    "Run `pnpm --filter amicode opencode:pin <tag>` to pin a release.",
-    "Or pull main to get the latest promoted pin.",
+    "Pull main to get the latest lock file.",
+    "The lock must have a 40-character hex `base_commit` field.",
   ],
 );
 
-export const LOCK_MISSING_REF = rebuildError(
-  "LOCK_NO_REF",
-  "opencode.lock.json has no fork commit ref",
+export const LOCK_MISSING_OVERLAY_HASH = rebuildError(
+  "LOCK_NO_OVERLAY_HASH",
+  "opencode.lock.json has no overlay_hash",
   [
-    "The lock file must have a 40-character hex `ref` field.",
-    "Run `pnpm --filter amicode opencode:pin <tag>` to fix it.",
+    "Pull main to get the latest lock file.",
   ],
 );
 
-export const LOCK_MISSING_PLATFORM = (platform: string, available: string[]) =>
+export const UNSUPPORTED_PLATFORM = (platform: string) =>
   rebuildError(
-    "LOCK_NO_PLATFORM",
-    `No lock entry for ${platform} (available: ${available.join(", ")})`,
-    ["Run `pnpm --filter amicode opencode:pin <tag>` to add this platform."],
+    "UNSUPPORTED_PLATFORM_LOCK",
+    `Platform ${platform} is not supported`,
+    ["Supported platforms: darwin-arm64, linux-arm64, linux-x64."],
   );
 
 // ── Platform errors (#1018, #1023) ──

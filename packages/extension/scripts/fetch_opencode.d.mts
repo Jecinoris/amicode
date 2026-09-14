@@ -1,5 +1,5 @@
-// Type declarations for the ESM fetch_opencode module (scripts/fetch_opencode.mjs).
-// Consumed by src/rebuild/main_source_resolver.ts via dynamic import.
+// Type declarations for the ESM fetch_opencode module (scripts/fetch_opencode.mjs) —
+// the opencode-binary vendoring helper behind the `fetch:opencode` script.
 
 export function loadManifest(root?: string): Record<string, unknown>;
 export function resolvePlatform(manifest: Record<string, unknown>, flag?: string): string;

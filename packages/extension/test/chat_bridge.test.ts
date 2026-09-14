@@ -4,11 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
-  appBundleBuildCommand,
   extractReportBugModel,
   handleAmicodeBridgeMessage,
-  mainOverlayVerificationCommand,
+  rebuildGitCommand,
   resolveDbBackupDir,
+  resolveRebuildMode,
   type BridgeIo,
 } from "../src/chat_bridge";
 
@@ -53,33 +53,41 @@ beforeEach(() => {
   ws.configUpdates.length = 0;
 });
 
-describe("developer-tools rebuild contracts (#1004)", () => {
-  it("builds a local worktree without a deployment or overlay gate", () => {
-    expect(appBundleBuildCommand("local", "/tmp/opencode")).toBe(
-      'pnpm --filter amicode run build:app -- --work "/tmp/opencode" --direct-worktree',
+describe("developer-tools rebuild mode — local vs main (#1115)", () => {
+  it("resolves the request mode to local | main, defaulting missing/legacy values to local", () => {
+    expect(resolveRebuildMode({ mode: "main" })).toBe("main");
+    expect(resolveRebuildMode({ mode: "local" })).toBe("local");
+    // Any missing or unrecognised mode is the safe, non-destructive default
+    // (build the working tree as-is) — a retired fork-era mode never silently
+    // triggers a checkout-main + pull.
+    expect(resolveRebuildMode({})).toBe("local");
+    expect(resolveRebuildMode({ mode: "legacy-unknown" })).toBe("local");
+  });
+
+  it("local builds the working tree as-is — no git checkout/pull is emitted", () => {
+    expect(rebuildGitCommand("local")).toBeNull();
+  });
+
+  it("main syncs to origin/main first — fetch + checkout main + ff-only pull", () => {
+    expect(rebuildGitCommand("main")).toBe(
+      "git fetch origin && git checkout main && git pull --ff-only origin main",
     );
   });
 
-  it("verifies the exact OpenCode revision before a main rebuild installs dependencies", () => {
-    expect(mainOverlayVerificationCommand("/tmp/opencode")).toContain(
-      'node packages/app-bundle/scripts/overlay-promotion.mjs --check --source "/tmp/opencode" --revision "$(git -C "/tmp/opencode" rev-parse HEAD)"',
-    );
-    expect(appBundleBuildCommand("main", "/tmp/opencode")).toBe(
-      'pnpm --filter amicode run build:app -- --work "/tmp/opencode" --verified-main',
-    );
+  it("the two buttons produce observably different git behavior", () => {
+    expect(rebuildGitCommand("local")).not.toEqual(rebuildGitCommand("main"));
   });
 });
 
-describe("developer-tools rebuild from main (#1018)", () => {
-  it("main mode requires only amicodePath, not opencodePath", async () => {
+describe("developer-tools rebuild — only amicodePath is required (#1018/#1115)", () => {
+  it("main mode requires only amicodePath, not an opencode path", async () => {
     const host = io();
-    // Main mode with amicodePath but no opencodePath should not fail with
-    // "Both repo paths must be set" — only amicodePath is required.
+    // Main mode with amicodePath should not fail with "Both repo paths must
+    // be set" — only amicodePath is required.
     const handled = handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-rebuild",
-      mode: "remote",
-      opencodePath: "",
+      mode: "main",
       amicodePath: "/tmp/amicode",
     }, host);
     expect(handled).toBe(true);
@@ -90,13 +98,12 @@ describe("developer-tools rebuild from main (#1018)", () => {
     expect(failMsg).toBeUndefined();
   });
 
-  it("main mode fails when amicodePath is empty", async () => {
+  it("fails when amicodePath is empty (either mode)", async () => {
     const host = io();
     handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-rebuild",
-      mode: "remote",
-      opencodePath: "",
+      mode: "main",
       amicodePath: "",
     }, host);
     const failMsg = host.posted.find(
@@ -106,20 +113,22 @@ describe("developer-tools rebuild from main (#1018)", () => {
     expect(failMsg!.error).toContain("Amicode repo path");
   });
 
-  it("local mode still requires both repo paths", async () => {
+  it("a local rebuild requires only amicodePath", async () => {
     const host = io();
+    // With amicodePath only — should not fail with a path-validation error
     handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-rebuild",
       mode: "local",
-      opencodePath: "",
       amicodePath: "/tmp/amicode",
     }, host);
     const failMsg = host.posted.find(
       (m: any) => m.kind === "dev-tools-rebuild-status" && m.state === "failed",
     );
-    expect(failMsg).toBeDefined();
-    expect(failMsg!.error).toContain("Both repo paths");
+    // May fail with "Amicode repo path" if empty, but NOT with a "both paths" error
+    if (failMsg) {
+      expect(failMsg.error).not.toContain("Both repo paths");
+    }
   });
 });
 
@@ -735,7 +744,9 @@ describe("amicode bridge — project-selected (#663)", () => {
 });
 
 // ============================================================================
-// dev-tools-update: path validation, tilde expansion (#940)
+// dev-tools-update: amicode path validation, tilde expansion (#940). The
+// opencode repo-path field is retired (#1115): the update handler validates
+// only the amicode path and no longer reads or validates an opencode path.
 // ============================================================================
 
 describe("amicode bridge — dev-tools-update path validation", () => {
@@ -743,16 +754,9 @@ describe("amicode bridge — dev-tools-update path validation", () => {
   let fakeAmicodeRepo: string;
 
   beforeEach(() => {
-    // Create a temporary directory tree that mimics valid repo layouts:
-    //   <tmpRoot>/opencode/dist/opencode/bin/opencode   (executable binary)
-    //   <tmpRoot>/amicode/packages/extension/            (directory)
+    // Create a temporary directory tree that mimics a valid amicode repo:
+    //   <tmpRoot>/amicode/packages/extension/   (directory)
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-test-"));
-    const binDir = path.join(tmpRoot, "opencode", "dist", "opencode", "bin");
-    fs.mkdirSync(binDir, { recursive: true });
-    const fakeBinary = path.join(binDir, "opencode");
-    fs.writeFileSync(fakeBinary, "#!/bin/sh\n");
-    fs.chmodSync(fakeBinary, 0o755);
-
     const extDir = path.join(tmpRoot, "amicode", "packages", "extension");
     fs.mkdirSync(extDir, { recursive: true });
     fakeAmicodeRepo = path.join(tmpRoot, "amicode");
@@ -762,56 +766,24 @@ describe("amicode bridge — dev-tools-update path validation", () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it("validates absolute paths correctly (baseline)", async () => {
+  it("validates a valid amicode path (baseline)", async () => {
     const host = io();
-    const fakeOpencodeRepo = path.join(tmpRoot, "opencode");
     handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-update",
       enabled: true,
-      opencodePath: fakeOpencodeRepo,
       amicodePath: fakeAmicodeRepo,
     }, host);
     await flush();
     const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
     expect(reply).toBeDefined();
-    expect(reply.opencodeValid).toBe(true);
     expect(reply.amicodeValid).toBe(true);
-  });
-
-  it("expands ~ in opencodePath before validation", async () => {
-    // tmpRoot lives under os.tmpdir(), which is NOT under the home directory
-    // on macOS/Linux CI — so we symlink a home-relative alias into it and
-    // exercise the real tilde-expansion path the way a user's default
-    // "~/harmoniqs/opencode" setting would.
-    const home = os.homedir();
-    const symlink = path.join(home, `.devtools-test-oc-${Date.now()}`);
-    fs.symlinkSync(path.join(tmpRoot, "opencode"), symlink);
-    try {
-      const tildePath = "~/" + path.basename(symlink);
-      const host = io();
-      handleAmicodeBridgeMessage({
-        source: "amicode",
-        kind: "dev-tools-update",
-        enabled: true,
-        opencodePath: tildePath,
-        amicodePath: fakeAmicodeRepo,
-      }, host);
-      await flush();
-      const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
-      expect(reply).toBeDefined();
-      expect(reply.opencodeValid).toBe(true);
-      expect(reply.opencodeError).toBeUndefined();
-    } finally {
-      fs.rmSync(symlink, { force: true });
-    }
   });
 
   it("expands ~ in amicodePath before validation", async () => {
     const home = os.homedir();
     const symlink = path.join(home, `.devtools-test-am-${Date.now()}`);
     fs.symlinkSync(fakeAmicodeRepo, symlink);
-    const fakeOpencodeRepo = path.join(tmpRoot, "opencode");
     try {
       const tildePath = "~/" + path.basename(symlink);
       const host = io();
@@ -819,7 +791,6 @@ describe("amicode bridge — dev-tools-update path validation", () => {
         source: "amicode",
         kind: "dev-tools-update",
         enabled: true,
-        opencodePath: fakeOpencodeRepo,
         amicodePath: tildePath,
       }, host);
       await flush();
@@ -832,34 +803,30 @@ describe("amicode bridge — dev-tools-update path validation", () => {
     }
   });
 
-  it("reports error for invalid paths (not a false positive)", async () => {
+  it("reports error for an invalid amicode path (not a false positive)", async () => {
     const host = io();
     handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-update",
       enabled: true,
-      opencodePath: "/definitely/not/a/real/repo",
       amicodePath: "/also/not/real",
     }, host);
     await flush();
     const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
     expect(reply).toBeDefined();
-    expect(reply.opencodeValid).toBe(false);
     expect(reply.amicodeValid).toBe(false);
   });
 
   // #941: committing a path must never build or reload on its own — only
   // the explicit "Rebuild Locally"/"Rebuild from Main" buttons (a separate
-  // dev-tools-rebuild message) may do that. Before this fix, blurring EITHER
-  // path field re-sent both current paths, and a valid non-empty amicodePath
-  // eagerly kicked off a real `bun run build` + an unconfirmed window reload.
+  // dev-tools-rebuild message) may do that. Before this fix, blurring the
+  // path field eagerly kicked off a real build + an unconfirmed window reload.
   it("committing a valid amicode path only validates — no build, no reload, no devAssetRoot write (#941)", async () => {
     const host = io();
     handleAmicodeBridgeMessage({
       source: "amicode",
       kind: "dev-tools-update",
       enabled: true,
-      opencodePath: path.join(tmpRoot, "opencode"),
       amicodePath: fakeAmicodeRepo,
     }, host);
     await flush();
@@ -880,46 +847,48 @@ describe("amicode bridge — dev-tools-update path validation", () => {
       source: "amicode",
       kind: "dev-tools-update",
       enabled: true,
-      opencodePath: "",
       amicodePath: "",
     }, host);
     await flush();
     expect(ws.configUpdates).toContainEqual(["devAssetRoot", ""]);
   });
+});
 
-  // #943: a real fork build never lands at the unsuffixed path the
-  // beforeEach fixture above uses — it always produces a platform-suffixed
-  // dist directory (dist/opencode-<platform>-<arch>/bin/opencode). Before
-  // the shared findForkedOpencodeBinary() helper, dev-tools-update's
-  // candidate list never checked that layout, so a genuinely valid repo
-  // path was reported "Binary not found at this path" — identically to an
-  // actual typo. Correcting a bad path to a real one just re-ran the same
-  // broken check and got the same wrong answer, which looked like nothing
-  // had updated.
-  it("validates a real fork build's platform-suffixed layout (#943)", async () => {
-    const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-real-build-"));
-    const platformKey = `${process.platform}-${process.arch}`;
-    const binDir = path.join(realRoot, "packages", "opencode", "dist", `opencode-${platformKey}`, "bin");
-    fs.mkdirSync(binDir, { recursive: true });
-    const realBinary = path.join(binDir, "opencode");
-    fs.writeFileSync(realBinary, "#!/bin/sh\n");
-    fs.chmodSync(realBinary, 0o755);
+// ============================================================================
+// dev-tools binary-override lifecycle (#1115). The binary live-swap the
+// opencode-path field fed is retired, but the GENERAL opencodeBinary override
+// (consumed by boot/health paths) must be preserved and still cleared on the
+// developer-mode toggle-off.
+// ============================================================================
+
+describe("amicode bridge — dev-tools binary override lifecycle (#1115)", () => {
+  it("toggle-off clears the general opencodeBinary override (boot/health consumer preserved)", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-update",
+      enabled: false,
+    }, host);
+    await flush();
+    expect(ws.configUpdates).toContainEqual(["opencodeBinary", ""]);
+  });
+
+  it("enabling dev mode no longer live-swaps the binary — no opencodeBinary write on an enabled update", async () => {
+    const host = io();
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-noswap-"));
+    const extDir = path.join(tmp, "packages", "extension");
+    fs.mkdirSync(extDir, { recursive: true });
     try {
-      const host = io();
       handleAmicodeBridgeMessage({
         source: "amicode",
         kind: "dev-tools-update",
         enabled: true,
-        opencodePath: realRoot,
-        amicodePath: fakeAmicodeRepo,
+        amicodePath: tmp,
       }, host);
       await flush();
-      const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
-      expect(reply).toBeDefined();
-      expect(reply.opencodeValid).toBe(true);
-      expect(reply.opencodeError).toBeUndefined();
+      expect(ws.configUpdates.some(([key]) => key === "opencodeBinary")).toBe(false);
     } finally {
-      fs.rmSync(realRoot, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

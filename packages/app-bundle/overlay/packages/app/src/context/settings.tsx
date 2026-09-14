@@ -55,7 +55,6 @@ export interface Settings {
   }
   developer: {
     enabled: boolean
-    opencodePath: string
     amicodePath: string
     devcontainerMode: boolean
     vsixOutputPath: string
@@ -222,7 +221,6 @@ const defaultSettings: Settings = {
   },
   developer: {
     enabled: false,
-    opencodePath: "",
     amicodePath: "",
     devcontainerMode: false,
     vsixOutputPath: "/workspaces/artifacts/",
@@ -593,10 +591,6 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         enabled: withFallback(() => store.developer?.enabled || developerBootFlag(), defaultSettings.developer.enabled || developerBootFlag()),
         setEnabled(value: boolean) {
           setStore("developer", "enabled", value)
-        },
-        opencodePath: withFallback(() => store.developer?.opencodePath, defaultSettings.developer.opencodePath),
-        setOpencodePath(value: string) {
-          setStore("developer", "opencodePath", value)
         },
         amicodePath: withFallback(() => store.developer?.amicodePath, defaultSettings.developer.amicodePath),
         setAmicodePath(value: string) {

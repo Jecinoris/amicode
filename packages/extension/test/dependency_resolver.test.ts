@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import type {
   DependencyCheckResult,
   ExecFn,
@@ -243,6 +244,26 @@ describe("dependency_resolver (#1020)", () => {
         { tool: "gh", required: false, present: false, sufficient: false },
       ];
       expect(isBlocked(deps)).toBe(false);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Exec-type provenance (#1117) — the shared exec types were relocated to a
+  // dedicated module; the live dependency resolver must import them from there,
+  // not from the removed main-source resolver.
+  // ════════════════════════════════════════════════════════════════════════
+  describe("exec-type provenance (#1117)", () => {
+    const src = readFileSync(
+      new URL("../src/rebuild/dependency_resolver.ts", import.meta.url),
+      "utf8",
+    );
+
+    it("imports the exec types from the dedicated ./exec_types module", () => {
+      expect(src).toMatch(/import\s+type\s+\{[^}]*ExecResult[^}]*\}\s+from\s+["']\.\/exec_types["']/);
+    });
+
+    it("no longer imports from the removed ./main_source_resolver module", () => {
+      expect(src).not.toContain("main_source_resolver");
     });
   });
 });
