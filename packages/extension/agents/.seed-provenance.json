@@ -9,30 +9,30 @@
     {
       "role": "hypothesizer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/hypothesizer.md",
-      "seeded_sha256": "sha256:f6864945d5f1b737a9503aa5466f3026ecc39fc7901883a7d85c03857f0bb2b8",
+      "seeded_sha256": "sha256:106e5f297b42010d9cffa4d2504df9de7584191fb3aaeb20fd469e43a51bc3bb",
       "seeded_at": "2026-08-18T19:45:34.000Z"
     },
     {
       "role": "experimenter",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/experimenter.md",
-      "seeded_sha256": "sha256:1bed34b410c31e00489360b1ed750b1edb27668b49bcce8ff8c61198b7321abf",
+      "seeded_sha256": "sha256:ea79ac07f0a0248ad4e480ab3c77991cb9a84ef78845ec7710c303e519535c28",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "analyzer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/analyzer.md",
-      "seeded_sha256": "sha256:13314049129ad4f9dbcadd961b0cbfc05fba01e3800380aad500b530411139ce",
+      "seeded_sha256": "sha256:f8704037c394056eab0aec721185dda50fcca0a7b150218211789501890ddf70",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "implementer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/implementer.md",
-      "seeded_sha256": "sha256:4c27b6ff55b13f6680293a59160479cfc29dea256fd4ef8b29ce22508e4478ac",
+      "seeded_sha256": "sha256:cef53cfd0449c650af113b4b114fad1b9449373befe34e16ad1e1e19f42d59ff",
       "seeded_at": "2026-08-20T18:24:56.000Z"
     }
   ],
   "amended": true,
-  "amended_at": "2026-09-07T00:00:00.000Z",
-  "amendment_signed_by": "aaron via harmoniqs/amicode#860 (the S3 issue's role-card acceptance criterion; spec-20260907-011500 D3 rev 3 — AFK walk)",
-  "amendment_note": "S3 model routing: the model_routing slots of the four seeded role cards are filled with CLASS-level prefer-lists (a '## Model routing' section appending one 'Model routing, suggested:' line naming workhorse / strongest-reasoner / fast-cheap — the public suggestion vocabulary, never tuned assignments). No other card content changed. seeded_sha256 entries updated to the amended bytes per this record's amendment protocol."
+  "amended_at": "2026-09-14T00:00:00.000Z",
+  "amendment_signed_by": "aaron via harmoniqs/amicode#860 amendment 1 (S3 model routing); amendment 2 via harmoniqs/amicode#1133 (post-campaign linkage-audit slice — the cast cards learn their hooks, the audit's items 1-2, AFK walk)",
+  "amendment_note": "Amendment 2 (post-campaign linkage audit, 2026-09-14): the four cast cards learn the landed skill-integrity hooks — analyzer gains duty #6 (the skill-friction check: instructions-vs-reality mismatches → findings-ledger notes quoting both sources; repeated un-skilled idioms → proposal-type findings, provenance-tagged), implementer's structured-return enumeration gains skill_findings (the front-line rule: findings, never silent workarounds), hypothesizer's briefing gains the campaign findings ledger (amicode/skills-integrity/findings/, personal vault) as a prior, experimenter's checkout-registry path moves to the Research-Project location <project>/ledger/campaigns/CHECKOUTS.md. Amendment 1 (S3 model routing, #860): the model_routing slots of the four seeded role cards were filled with CLASS-level prefer-lists (a '## Model routing' section appending one 'Model routing, suggested:' line naming workhorse / strongest-reasoner / fast-cheap — the public suggestion vocabulary, never tuned assignments). seeded_sha256 entries updated to the amended bytes per this record's amendment protocol."
 }

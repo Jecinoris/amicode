@@ -8,6 +8,8 @@ scenarios: [characterize-new-device]
 
 Lab model and device management for the Amico system. Covers device status, allocation, and locking for experiment dispatch. Phase 0 scope: simulation devices only. No QPU allocation and no hardware export yet.
 
+**Probe/experiment boundary:** read-only availability probes (status checks, lock peeks) are probes; the moment work allocates a device or launches on it, it is an experiment and follows the research loop's gate discipline (reviewed spec, ledger, gates).
+
 ## Device Note Schema
 
 Device notes live in `model-of-lab/` in the vault. YAML frontmatter:

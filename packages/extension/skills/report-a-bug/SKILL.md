@@ -11,6 +11,8 @@ surface: public
 
 File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus at least one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
 
+**A skill-vs-reality conflict gets a second record.** If the bug is a skill instruction contradicting observed reality (a skill's API, path, or constant wrong), ALSO file or append a findings-ledger note (`amicode/skills-integrity/findings/`, personal vault): the GitHub issue and the finding are different records with different lifecycles — the issue tracks the fix, the finding tracks the drift.
+
 **The flow:** read the context envelope (when the session carries one) → classify the surface → capture (at least one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints after any successful GitHub action (issue created OR comment posted).**
 
 ## 0. Read the context envelope (when the session carries one)
