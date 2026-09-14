@@ -25,3 +25,11 @@ paper-writer/SKILL.md:companion:paper/outline.md
 paper-writer/SKILL.md:companion:skills/paper-writer/SKILL.md
 research/SKILL.md:companion:ledger/campaigns/CHECKOUTS.md
 
+# The `vpath` rule's OWNER file must cite the rotted shapes it teaches. The F28
+# vault-path doctrine (PR #1105) lives in amico-vault/SKILL.md and names the
+# 2026-08-21 `vault-aaron` → `armonia-aaron-trowbridge` rename as its proof
+# case — a deliberate citation of the rot the rule prevents, not rot itself.
+# Exempt the doctrine owner's vpath findings; NEW vpath rot in any OTHER skill
+# still fails. (vpath exemptions are per-file: the rule carries no :ref form.)
+amico-vault/SKILL.md:vpath
+
