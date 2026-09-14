@@ -837,12 +837,6 @@ export const dict = {
   "settings.general.row.developerMode.title": "Use developer build",
   "settings.general.row.developerMode.description":
     "Switch between the release and a local developer build of the opencode server and Amicode extension",
-  "settings.general.row.opencodePath.title": "opencode repo path",
-  "settings.general.row.opencodePath.description":
-    "Path to your local opencode repository root (the binary is resolved from here)",
-  "settings.general.row.opencodePath.placeholder": "/path/to/opencode",
-  "settings.general.row.opencodePath.error.notFound": "Binary not found at this path",
-  "settings.general.row.opencodePath.error.notExecutable": "Binary exists but is not executable",
   "settings.general.row.amicodePath.title": "Amicode repo path",
   "settings.general.row.amicodePath.description":
     "Path to your local Amicode repository root (rebuilds extension and reloads on change)",

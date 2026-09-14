@@ -39,18 +39,29 @@ export function resolveDbBackupDir(sessionDatabase: string): string {
   return opencodeDataDir();
 }
 
-export type RebuildMode = "overlay" | "local" | "main";
+export type RebuildMode = "local" | "main";
 
-/** The app build has two intentionally non-interchangeable source contracts.
- *  @deprecated — retained for backward compat; overlay mode is the only path. */
-export function appBundleBuildCommand(mode: RebuildMode, opencodePath: string): string {
-  const contract = mode === "local" ? "--direct-worktree" : "--verified-main";
-  return `pnpm --filter amicode run build:app -- --work "${opencodePath}" ${contract}`;
+/**
+ * Resolve the rebuild request's `mode` to the two-button vocabulary (#1115).
+ * `local` builds the working tree as-is; `main` syncs to origin/main first.
+ * Anything missing or unrecognised (including any retired fork-era mode)
+ * resolves to the safe, non-destructive `local` default.
+ */
+export function resolveRebuildMode(msg: unknown): RebuildMode {
+  return (msg as { mode?: unknown } | null)?.mode === "main" ? "main" : "local";
 }
 
-/** @deprecated — retained for backward compat; overlay mode verifies via build:binary. */
-export function mainOverlayVerificationCommand(opencodePath: string): string {
-  return `node packages/app-bundle/scripts/overlay-promotion.mjs --check --source "${opencodePath}" --revision "$(git -C "${opencodePath}" rev-parse HEAD)"`;
+/**
+ * The git step a rebuild runs before building, keyed on the button pressed —
+ * the one place the two Rebuild buttons diverge (#1115). `local` builds the
+ * working tree exactly as it sits (no git mutation → null); `main` syncs to
+ * origin/main first (fetch + checkout main + fast-forward-only pull).
+ */
+export function rebuildGitCommand(mode: RebuildMode): string | null {
+  if (mode === "main") {
+    return "git fetch origin && git checkout main && git pull --ff-only origin main";
+  }
+  return null;
 }
 
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
@@ -414,15 +425,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Developer Tools settings: validate paths, swap the opencode binary +
-  // restart its server as appropriate. The app posts on blur and on toggle.
-  // Committing the amicode path is validate-only — no build, no reload; see
-  // the note at that branch below (#941).
+  // Developer Tools settings: validate the amicode repo path. The app posts
+  // on blur and on toggle. Committing the amicode path is validate-only — no
+  // build, no reload; see the note at that branch below (#941). The opencode
+  // repo-path field and the binary live-swap it fed are retired in the
+  // overlay-build world (#1115) — the general opencodeBinary override is still
+  // cleared on toggle-off, but nothing here sets it from a resolved path.
   if (msg.kind === "dev-tools-update") {
     const enabled = (msg as { enabled?: unknown }).enabled === true;
-    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
-      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
-      : "";
     const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
       ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
       : "";
@@ -480,21 +490,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
 
-    // Validate opencode path: resolve the binary from the repo root
-    let resolvedBinary = "";
-    if (opencodePath) {
-      const resolution = findForkedOpencodeBinary(opencodePath);
-      if (resolution.found) {
-        resolvedBinary = resolution.path;
-      } else if (resolution.reason === "not-executable") {
-        reply.opencodeValid = false;
-        reply.opencodeError = "Binary exists but is not executable";
-      } else {
-        reply.opencodeValid = false;
-        reply.opencodeError = "Binary not found at this path";
-      }
-    }
-
     // Validate amicode path: must be a repo root with packages/extension
     if (amicodePath) {
       const extensionDir = path.join(amicodePath, "packages", "extension");
@@ -523,30 +518,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       }
     }
 
-    // Apply valid settings
-    if (reply.opencodeValid && opencodePath) {
-      void vscode.workspace.getConfiguration("amicode").update(
-        "opencodeBinary", resolvedBinary || opencodePath, vscode.ConfigurationTarget.Global,
-      );
-      void vscode.commands.executeCommand("amicode.restartServer");
-      reply.serverRestarted = true;
-    } else if (reply.opencodeValid && !opencodePath) {
-      // Empty path with enabled ON → clear the override (use vendored)
-      void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
-      void vscode.commands.executeCommand("amicode.restartServer");
-      reply.serverRestarted = true;
-    }
-
     // Committing the amicode path only validates it (above) — it never
-    // builds or reloads on its own (#941). Blurring a path field used to
-    // eagerly run a real `bun run build` and auto-reload the window with no
-    // confirmation, and since the app always resends BOTH current paths on
-    // any field's blur, even an unrelated edit to the opencode field would
-    // retrigger it. Building is now exclusively an explicit action — the
-    // "Rebuild Locally" / "Rebuild from Main" buttons (dev-tools-rebuild,
-    // below), which are self-sufficient and don't depend on anything set
-    // here. Clearing the path to empty still clears any devAssetRoot
-    // override, since that's just removing a setting, not building one.
+    // builds or reloads on its own (#941). Building is exclusively an explicit
+    // action — the "Rebuild Locally" / "Rebuild from Main" buttons
+    // (dev-tools-rebuild, below), which are self-sufficient and don't depend
+    // on anything set here. The binary live-swap that the removed opencode-path
+    // field fed is retired (#1115): nothing here sets opencodeBinary from a
+    // resolved path anymore. Clearing the amicode path to empty still clears
+    // any devAssetRoot override, since that's just removing a setting.
     if (reply.amicodeValid && !amicodePath) {
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
     }
@@ -556,8 +535,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
    // Full rebuild: builds the binary from the materialized overlay tree
-   // via build:binary (bun required). Replaces the old fork-based dual modes.
+   // via build:binary (bun required). Two buttons, two modes (#1115):
+   // `local` builds the working tree as-is; `main` syncs to origin/main first.
   if (msg.kind === "dev-tools-rebuild") {
+    const mode = resolveRebuildMode(msg);
     const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
       ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
       : "";
@@ -666,19 +647,25 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           // DB backup is best-effort
         }
 
-        // ── Git pull (amicode repo) ──
-        io.postToWebview({
-          source: "amicode", kind: "dev-tools-rebuild-status",
-          tab: (msg as { tab?: string }).tab, state: "rebuilding",
-          phase: "pulling", detail: "Pulling amicode repo...",
-        });
-        const checkoutAc = await run("git fetch origin && git checkout main && git pull --ff-only origin main", amicodePath);
-        if (!checkoutAc.ok) {
+        // ── Git sync (amicode repo) — mode-dependent (#1115) ──
+        // `local` builds the working tree exactly as it sits (no git mutation);
+        // `main` syncs to origin/main first. This is the one place the two
+        // Rebuild buttons diverge.
+        const gitCommand = rebuildGitCommand(mode);
+        if (gitCommand) {
           io.postToWebview({
-            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-            state: "failed", error: `git pull (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
+            source: "amicode", kind: "dev-tools-rebuild-status",
+            tab: (msg as { tab?: string }).tab, state: "rebuilding",
+            phase: "pulling", detail: "Syncing amicode repo to origin/main...",
           });
-          return;
+          const checkoutAc = await run(gitCommand, amicodePath);
+          if (!checkoutAc.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `git sync (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
         }
 
         // ── Install amicode dependencies ──

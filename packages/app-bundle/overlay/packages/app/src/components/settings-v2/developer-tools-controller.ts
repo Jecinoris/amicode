@@ -40,7 +40,7 @@ export function createDeveloperToolsController() {
 
   // On mount, check if we just came back from a rebuild (successful or in-progress).
   // The "rebuilding" flag survives iframe reloads caused by file-watcher churn
-  // (e.g. git checkout in a watched workspace folder during remote rebuild).
+  // (e.g. git checkout in a watched workspace folder during a from-main rebuild).
   onMount(() => {
     try {
       const wasRebuilding = localStorage.getItem("amicode:devtools-rebuilding") === "1"
@@ -179,14 +179,13 @@ export function createDeveloperToolsController() {
         source: "amicode",
         kind: "dev-tools-update",
         enabled: settings.developer.enabled(),
-        opencodePath: settings.developer.opencodePath(),
         amicodePath: settings.developer.amicodePath(),
       },
       "*",
     )
   }
 
-  const rebuild = (mode: "local" | "remote") => {
+  const rebuild = (mode: "local" | "main") => {
     if (!inAmicode()) return
     if (rebuildState() === "rebuilding") return // prevent double-clicks
     setRebuildState("rebuilding")
@@ -197,7 +196,6 @@ export function createDeveloperToolsController() {
         source: "amicode",
         kind: "dev-tools-rebuild",
         mode,
-        opencodePath: settings.developer.opencodePath(),
         amicodePath: settings.developer.amicodePath(),
       },
       "*",
@@ -229,29 +227,21 @@ export function createDeveloperToolsController() {
             source: "amicode",
             kind: "dev-tools-update",
             enabled: false,
-            opencodePath: settings.developer.opencodePath(),
             amicodePath: settings.developer.amicodePath(),
           },
           "*",
         )
       }
     },
-    opencodePath: settings.developer.opencodePath,
-    setOpencodePath: (value: string) => {
-      settings.developer.setOpencodePath(value)
-    },
     amicodePath: settings.developer.amicodePath,
     setAmicodePath: (value: string) => {
       settings.developer.setAmicodePath(value)
     },
     /** Trigger validation + apply on blur — only in developer mode (not devcontainer-only mode) */
-    commitOpencodePath: () => {
-      if (settings.developer.enabled()) sendUpdate()
-    },
     commitAmicodePath: () => {
       if (settings.developer.enabled()) sendUpdate()
     },
-    /** Trigger a full rebuild (local = from disk, remote = git pull first) */
+    /** Trigger a full rebuild (local = build the working tree as-is; main = checkout main + ff-pull first) */
     rebuild,
     status,
     pending,
@@ -275,7 +265,6 @@ export function createDeveloperToolsController() {
       window.parent.postMessage({
         source: "amicode",
         kind: "dev-tools-build-vsix",
-        opencodePath: settings.developer.opencodePath(),
         amicodePath: settings.developer.amicodePath(),
         outputPath: settings.developer.vsixOutputPath(),
       }, "*")

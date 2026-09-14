@@ -73,11 +73,6 @@ const RebuildErrorPanel: Component<{ controller: DeveloperToolsController }> = (
 
 const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }> = (props) => {
   const language = useLanguage()
-  const opencodeError = () => {
-    const s = props.controller.status()
-    if (!s || s.opencodeValid) return undefined
-    return s.opencodeError ?? language.t("settings.general.row.opencodePath.error.notFound")
-  }
   const amicodeError = () => {
     const s = props.controller.status()
     if (!s || s.amicodeValid) return undefined
@@ -103,7 +98,7 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
           <ButtonV2
             size="small"
             variant="neutral"
-            onClick={() => props.controller.rebuild("remote")}
+            onClick={() => props.controller.rebuild("main")}
             disabled={isRebuilding()}
           >
             {language.t("settings.general.row.devTools.rebuildRemotely")}
@@ -162,40 +157,6 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
 
       {/* Path inputs — visible when EITHER mode is ON */}
       <Show when={props.controller.enabled() || props.controller.devcontainerMode()}>
-        <SettingsRowV2
-          title={language.t("settings.general.row.opencodePath.title")}
-          description={
-            <>
-              {language.t("settings.general.row.opencodePath.description")}
-              <Show when={opencodeError()}>
-                <span class="settings-v2-field-error" classList={{ "settings-v2-field-stale": validating() }}>
-                  {opencodeError()}
-                </span>
-              </Show>
-              <Show when={validating()}>
-                <span class="settings-v2-field-info">Validating…</span>
-              </Show>
-            </>
-          }
-        >
-          <div class="w-full sm:w-[280px]">
-            <TextInputV2
-              data-action="settings-opencode-path"
-              type="text"
-              appearance="base"
-              value={props.controller.opencodePath()}
-              onInput={(event) => props.controller.setOpencodePath(event.currentTarget.value)}
-              onBlur={() => props.controller.commitOpencodePath()}
-              placeholder={language.t("settings.general.row.opencodePath.placeholder")}
-              spellcheck={false}
-              autocorrect="off"
-              autocomplete="off"
-              autocapitalize="off"
-              aria-label={language.t("settings.general.row.opencodePath.title")}
-            />
-          </div>
-        </SettingsRowV2>
-
         <SettingsRowV2
           title={language.t("settings.general.row.amicodePath.title")}
           description={
