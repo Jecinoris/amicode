@@ -19,7 +19,7 @@ export default {
         );
       `)
       yield* tx.run(
-        `INSERT INTO \`__new_session_receipt_operation\`(\`id\`, \`root_id\`, \`session_id\`, \`origin\`, \`reserved_receipts\`, \`reserved_metadata_bytes\`, \`state\`) SELECT \`id\`, \`root_id\`, \`session_id\`, \`origin\`, \`reserved_receipts\`, \`reserved_metadata_bytes\`, \`state\` FROM \`session_receipt_operation\`;`,
+        `INSERT INTO \`__new_session_receipt_operation\`(\`id\`, \`root_id\`, \`session_id\`, \`origin\`, \`state\`) SELECT \`id\`, \`root_id\`, \`session_id\`, \`origin\`, \`state\` FROM \`session_receipt_operation\`;`,
       )
       yield* tx.run(`DROP TABLE \`session_receipt_operation\`;`)
       yield* tx.run(`ALTER TABLE \`__new_session_receipt_operation\` RENAME TO \`session_receipt_operation\`;`)
