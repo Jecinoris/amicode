@@ -9,8 +9,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runRebuild, deployBuild, type RebuildCoordinatorOpts } from "../src/rebuild/coordinator";
-import type { ExecResult } from "../src/rebuild/main_source_resolver";
+import { deployBuild } from "../src/rebuild/coordinator";
+import type { ExecResult } from "../src/rebuild/exec_types";
 
 // ── Helpers ──
 
@@ -18,19 +18,6 @@ type ExecFn = (cmd: string, cwd?: string) => Promise<ExecResult>;
 
 function tmpRoot(): string {
   return mkdtempSync(join(tmpdir(), "coord-test-"));
-}
-
-function writeLock(root: string): void {
-  mkdirSync(join(root, "packages", "extension"), { recursive: true });
-  writeFileSync(
-    join(root, "packages", "extension", "opencode.lock.json"),
-    JSON.stringify({
-      version: "1.18.29",
-      base_version: "1.18.29",
-      base_commit: "7fe993879f98aa17cecc70f70d3f40d6f0f11689",
-      overlay_hash: "aa".repeat(32),
-    }),
-  );
 }
 
 /** An exec mock where everything succeeds */
@@ -77,162 +64,6 @@ describe("rebuild coordinator (#1016 integration)", () => {
   afterEach(() => {
     for (const d of cleanup) rmSync(d, { recursive: true, force: true });
     cleanup = [];
-  });
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Step 1: Host gate (#1023)
-  // ════════════════════════════════════════════════════════════════════════
-  describe("host gate", () => {
-    it("rejects win32 before any other work", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec: happyExec(),
-        platform: "win32",
-        arch: "x64",
-      });
-      expect(result.ok).toBe(false);
-      expect(result.error?.message).toMatch(/Windows|WSL/i);
-    });
-
-    it("rejects darwin-x64 (Intel Mac)", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec: happyExec(),
-        platform: "darwin",
-        arch: "x64",
-      });
-      expect(result.ok).toBe(false);
-      expect(result.error?.message).toMatch(/Apple Silicon|arm64/i);
-    });
-
-    it("rejects WSL 1", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const exec: ExecFn = async (cmd) => {
-        if (cmd.includes("cat /proc/version")) {
-          return { ok: true, stdout: "Linux version 4.4.0-19041-Microsoft" };
-        }
-        return (happyExec())(cmd);
-      };
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec,
-        platform: "linux",
-        arch: "x64",
-      });
-      expect(result.ok).toBe(false);
-      expect(result.error?.message).toMatch(/WSL 1/i);
-    });
-
-    it("allows WSL 2", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const exec: ExecFn = async (cmd) => {
-        if (cmd.includes("cat /proc/version")) {
-          return { ok: true, stdout: "Linux version 5.15.90.1-microsoft-standard-WSL2" };
-        }
-        return (happyExec())(cmd);
-      };
-      // Will fail downstream (no real git/download) but should pass the host gate
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec,
-        platform: "linux",
-        arch: "x64",
-      });
-      // The host gate passed if the error is NOT about the platform
-      if (!result.ok) {
-        expect(result.error?.message).not.toMatch(/WSL|not supported|Apple/i);
-      }
-    });
-  });
-
-  // ════════════════════════════════════════════════════════════════════════
-  // Step 2: Dependency pre-flight (#1020)
-  // ════════════════════════════════════════════════════════════════════════
-  describe("dependency pre-flight", () => {
-    it("blocks when node is missing", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const exec: ExecFn = async (cmd) => {
-        if (cmd.includes("node --version")) return { ok: false, error: "not found" };
-        if (cmd.includes("cat /proc/version")) return { ok: false, error: "" };
-        return (happyExec())(cmd);
-      };
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec,
-        platform: "linux",
-        arch: "x64",
-      });
-      expect(result.ok).toBe(false);
-      expect(result.error?.code).toBe("DEPS_BLOCKED");
-      expect(result.error?.fix?.some((f) => f.includes("Node"))).toBe(true);
-    });
-
-    it("blocks when git is missing", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const exec: ExecFn = async (cmd) => {
-        if (cmd.includes("git --version")) return { ok: false, error: "not found" };
-        if (cmd.includes("cat /proc/version")) return { ok: false, error: "" };
-        return (happyExec())(cmd);
-      };
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec,
-        platform: "linux",
-        arch: "x64",
-      });
-      expect(result.ok).toBe(false);
-      expect(result.error?.code).toBe("DEPS_BLOCKED");
-    });
-
-    it("does not block when only gh is missing in main mode", async () => {
-      const root = tmpRoot();
-      cleanup.push(root);
-      writeLock(root);
-      const exec: ExecFn = async (cmd) => {
-        if (cmd.includes("gh --version")) return { ok: false, error: "not found" };
-        if (cmd.includes("cat /proc/version")) return { ok: false, error: "" };
-        return (happyExec())(cmd);
-      };
-      const result = await runRebuild({
-        mode: "main",
-        amicodePath: root,
-        extensionPath: join(root, "ext"),
-        exec,
-        platform: "linux",
-        arch: "x64",
-      });
-      // Should pass the dep check (gh is soft in main mode);
-      // will fail downstream on git pull etc. but not on deps
-      if (!result.ok) {
-        expect(result.error?.code).not.toBe("DEPS_BLOCKED");
-      }
-    });
   });
 
   // ════════════════════════════════════════════════════════════════════════

@@ -1,49 +1,32 @@
 /**
- * Rebuild coordinator — the shared orchestration function (#1016)
+ * Rebuild deployment — the atomic-swap deployment step (#1016, #1021).
  *
- * Both the Developer Tools bridge handler (chat_bridge.ts) and the
- * shell scripts (rebuild_amicode_*.sh) call this. Every module from
- * #1018–#1023 is wired through here.
+ * The Developer Tools bridge handler (chat_bridge.ts) calls `deployBuild`
+ * after building the extension from the committed overlay. Host classification
+ * (#1023) and dependency pre-flight (#1020) run in the bridge handler directly
+ * via host_matrix + dependency_resolver.
  *
- * Flow:
- * 1. classifyHost + detectWSLVersion → reject unsupported hosts (#1023)
- * 2. checkDependencies + isBlocked → refuse if hard prereqs missing (#1020)
- * 3. Session DB backup
- * 4. Main: rebuildFromMain (git pull + release download) / Local: fork build (#1018)
- * 5. pnpm install + amicode build + app bundle build
- * 6. stageExtensionBuild + atomicSwap (#1021)
- * 7. No settings.json writes (#1022)
+ * deployBuild flow:
+ * 1. Back up the installed extension (#1021)
+ * 2. Stage the build output (#1021)
+ * 3. Codesign the binary on macOS (best-effort)
+ * 4. Write a pending-swap marker, atomic swap, commit (#1021)
+ * 5. No settings.json writes (#1022)
  */
 
 import * as path from "node:path";
 
-import { classifyHost, detectWSLVersion, gateKeeperClear } from "./host_matrix";
-import { checkDependencies, isBlocked, buildProvisionPlan } from "./dependency_resolver";
-import { rebuildFromMain, type ExecFn, type ExecResult } from "./main_source_resolver";
+import { gateKeeperClear } from "./host_matrix";
 import { stageExtensionBuild, createBackup, atomicSwap, pruneBackups, writePendingMarker, commitSwap } from "./atomic_adoption";
-import { classifyError, type RebuildError } from "../rebuild_errors";
+import type { ExecFn, ExecResult } from "./exec_types";
+import type { RebuildError } from "../rebuild_errors";
 
 // ── Types ──
-
-export type RebuildMode = "main" | "local";
-
-export interface RebuildCoordinatorOpts {
-  mode: RebuildMode;
-  amicodePath: string;
-  opencodePath?: string;           // required for local mode only
-  extensionPath: string;           // installed extension dir (context.extensionPath)
-  exec?: ExecFn;                   // injectable for tests
-  onPhase?: (phase: string, detail?: string) => void;
-  platform?: string;               // override for tests
-  arch?: string;                   // override for tests
-}
 
 export interface RebuildCoordinatorResult {
   ok: boolean;
   error?: RebuildError;
-  binaryPath?: string;
   rolledBack?: boolean;
-  pendingPromotion?: { pending: boolean; remoteHead?: string };
 }
 
 // ── Default shell exec ──
@@ -56,103 +39,6 @@ function defaultExec(cmd: string, cwd?: string): Promise<ExecResult> {
       else resolve({ ok: true, stdout: stdout?.toString() ?? "" });
     });
   });
-}
-
-// ── Coordinator ──
-
-export async function runRebuild(opts: RebuildCoordinatorOpts): Promise<RebuildCoordinatorResult> {
-  const exec = opts.exec ?? defaultExec;
-  const onPhase = opts.onPhase ?? (() => {});
-  const platform = opts.platform ?? process.platform;
-  const arch = opts.arch ?? process.arch;
-
-  // ── Step 1: Host classification (#1023) ──
-  onPhase("host-check", "Checking platform compatibility...");
-  const host = classifyHost(platform, arch);
-  if (!host.supported) {
-    return {
-      ok: false,
-      error: {
-        code: "UNSUPPORTED_HOST",
-        message: host.rejection ?? "Unsupported platform",
-        fix: platform === "win32"
-          ? ["Open your project in WSL (Remote — WSL).", "Amicode will install and run inside the Linux extension host."]
-          : platform === "darwin"
-            ? ["This Mac needs an arm64 processor. Rosetta cannot help; the binary is arm64-native."]
-            : [`Supported platforms: darwin-arm64, linux-x64, linux-arm64.`],
-      },
-    };
-  }
-
-  // WSL 1 detection — reject because atomic rename fails on lxfs
-  if (platform === "linux") {
-    const wslVersion = await detectWSLVersion(platform, exec);
-    if (wslVersion === 1) {
-      return {
-        ok: false,
-        error: {
-          code: "WSL1_UNSUPPORTED",
-          message: "WSL 1 is not supported — atomic file operations fail on lxfs",
-          fix: [
-            "Upgrade to WSL 2: wsl --set-version <distro> 2",
-            "Or run natively on Linux.",
-          ],
-        },
-      };
-    }
-  }
-
-  // ── Step 2: Dependency pre-flight (#1020) ──
-  onPhase("deps-check", "Checking dependencies...");
-  const deps = await checkDependencies(opts.mode, exec);
-  if (isBlocked(deps)) {
-    const plan = buildProvisionPlan(deps);
-    return {
-      ok: false,
-      error: {
-        code: "DEPS_BLOCKED",
-        message: "Missing required dependencies",
-        fix: plan.blockers.map((b) => `${b.tool}: ${b.guidance}`),
-      },
-    };
-  }
-
-  // ── Step 3: Mode-specific source resolution (#1018) ──
-  let resolvedBinary = "";
-  let pendingPromotion: { pending: boolean; remoteHead?: string } | undefined;
-
-  if (opts.mode === "main") {
-    onPhase("main-resolve", "Pulling main and downloading binary...");
-    const mainResult = await rebuildFromMain({
-      amicodePath: opts.amicodePath,
-      exec,
-      platformOverride: platform,
-      archOverride: arch,
-      onPhase,
-    });
-    if (!mainResult.ok) {
-      return { ok: false, error: classifyError(mainResult.error ?? "Main rebuild failed") };
-    }
-    resolvedBinary = mainResult.binaryPath ?? "";
-    pendingPromotion = mainResult.pendingPromotion;
-  } else {
-    // Local mode: fork build (the exec-based flow stays in chat_bridge.ts
-    // because it needs the buildEnv injection and the existing bun/pnpm commands).
-    // This coordinator handles the pre-flight and deployment steps around it.
-    // The caller is responsible for the fork build and passing resolvedBinary.
-    //
-    // For the shell script path, the fork build is done by the script itself.
-    // For the bridge path, the fork build is done inline in the handler.
-    //
-    // We return early here — the caller continues with the local build and
-    // then calls deployBuild() for the deployment step.
-  }
-
-  return {
-    ok: true,
-    binaryPath: resolvedBinary,
-    pendingPromotion,
-  };
 }
 
 // ── Deployment step (called after build completes) ──
