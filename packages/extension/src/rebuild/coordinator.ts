@@ -1,9 +1,8 @@
 /**
  * Rebuild coordinator — the shared orchestration function (#1016)
  *
- * Both the Developer Tools bridge handler (chat_bridge.ts) and the
- * shell scripts (rebuild_amicode_*.sh) call this. Every module from
- * #1018–#1023 is wired through here.
+ * The Developer Tools bridge handler (chat_bridge.ts) calls this.
+ * Every module from #1018–#1023 is wired through here.
  *
  * Flow:
  * 1. classifyHost + detectWSLVersion → reject unsupported hosts (#1023)
