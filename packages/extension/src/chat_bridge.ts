@@ -8,6 +8,7 @@ import { classifyError } from "./rebuild_errors";
 import { deployBuild } from "./rebuild/coordinator";
 import { classifyHost, detectWSLVersion } from "./rebuild/host_matrix";
 import { checkDependencies, isBlocked, buildProvisionPlan } from "./rebuild/dependency_resolver";
+import { stopSurvivingServer } from "./rebuild/server_teardown";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
@@ -799,6 +800,21 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           });
           return;
         }
+
+        // ── Stop surviving detached server (#1146, ADR 0020 lifecycle gap) ──
+        // The detached-spawn model lets the opencode server survive the host's
+        // exit. A rebuild swaps the binary underneath it; on reload, the new
+        // extension hits a ServeError (port occupied) + 401 (wrong password).
+        // Stop it BEFORE deploying so the new extension cold-spawns cleanly.
+        const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+        await stopSurvivingServer({
+          log: (line) => io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status",
+            tab: (msg as { tab?: string }).tab, state: "rebuilding",
+            phase: "server-teardown", detail: line,
+          }),
+          fallbackPort: configuredPort > 0 ? configuredPort : 43117,
+        });
 
         // ── Deploy build via atomic swap (#1021) ──
         const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");

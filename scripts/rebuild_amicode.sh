@@ -381,6 +381,69 @@ find_installed_ext() {
   echo "$found"
 }
 
+# ── Stop surviving detached server (ADR 0020 lifecycle) ─────────────────────
+# The detached-spawn model (#1146) lets the opencode server survive the
+# extension host's exit. A rebuild swaps the binary + dist underneath it;
+# on reload, the new extension tries to cold-spawn on the same port and
+# hits a ServeError (port occupied), while the health probe gets 401 from
+# the old server's password → 30 s timeout → boot failure.
+#
+# Fix: before deploying, read the handshake at ~/.amico/ops/server/standalone.json
+# to find the PID. Kill it (SIGTERM, wait, SIGKILL fallback). If no handshake
+# exists, fall back to lsof on the configured port. Delete the handshake file
+# after the server is down so the new extension cold-spawns cleanly.
+HANDSHAKE_PATH="${HOME}/.amico/ops/server/standalone.json"
+
+stop_surviving_server() {
+  local pid="" port=""
+
+  # 1. Try the handshake record first (authoritative).
+  if [ -f "$HANDSHAKE_PATH" ]; then
+    pid="$(node -e "try{const h=JSON.parse(require('fs').readFileSync('$HANDSHAKE_PATH','utf8'));process.stdout.write(String(h.pid||''))}catch{}" 2>/dev/null || true)"
+    port="$(node -e "try{const h=JSON.parse(require('fs').readFileSync('$HANDSHAKE_PATH','utf8'));process.stdout.write(String(h.port||''))}catch{}" 2>/dev/null || true)"
+  fi
+
+  # 2. If no PID from handshake, fall back to lsof on the default port (43117).
+  if [ -z "$pid" ] && command -v lsof >/dev/null 2>&1; then
+    local target_port="${port:-43117}"
+    pid="$(lsof -ti :"$target_port" 2>/dev/null | head -1 || true)"
+    [ -n "$pid" ] && echo "==> No handshake found, but PID $pid is holding port $target_port (lsof fallback)"
+  fi
+
+  # 3. Nothing to stop.
+  if [ -z "$pid" ]; then
+    echo "==> No surviving opencode server to stop"
+    # Clean up any stale handshake anyway.
+    rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+    return 0
+  fi
+
+  # 4. Verify PID is alive before trying to kill.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "==> Surviving server PID $pid is already dead — cleaning up handshake"
+    rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+    return 0
+  fi
+
+  # 5. SIGTERM, then SIGKILL fallback.
+  echo "==> Stopping surviving opencode server (PID $pid, port ${port:-?})..."
+  kill "$pid" 2>/dev/null || true
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 5 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "==> Server did not exit after SIGTERM — sending SIGKILL"
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 1
+  fi
+
+  # 6. Delete the handshake so the new extension cold-spawns cleanly.
+  rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+  echo "==> Surviving server stopped and handshake cleared"
+}
+
 # ── Running-server interlock (OB12) — lsof-scoped, warn-by-default (#1138) ──
 # The concern: a server actively writing the session DB during the backup could
 # tear it. But this is belt-and-suspenders — db_is_zeroed + WAL-checkpoint +
@@ -632,6 +695,11 @@ main() {
 
   # Build.
   build_amicode
+
+  # Stop any surviving detached server BEFORE deploying — the rebuild swaps
+  # the binary underneath it, so the new extension would fail to cold-spawn
+  # on the occupied port (#1146, ADR 0020 lifecycle gap).
+  stop_surviving_server
 
   # Deploy into the installed extension.
   deploy_into_installed_ext
