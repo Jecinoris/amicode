@@ -9,8 +9,8 @@ untouched.
 
 ## Prerequisites
 
-- Access to `harmoniqs/amicode` **and** `harmoniqs/opencode` (the private fork mirror — ask Aaron
-  if you get a 404), with `gh` CLI authed (`gh auth status`).
+- Access to `harmoniqs/amicode`, with `gh` CLI authed (`gh auth status`).
+- bun (for compiling the engine binary): `curl -fsSL https://bun.sh/install | bash`.
 - Julia ≥ 1.12 (`curl -fsSL https://install.julialang.org | sh`), Node ≥ 20, `corepack enable`.
 
 ## Install (~20 min, dominated by Julia precompile)
@@ -19,7 +19,7 @@ untouched.
 git clone git@github.com:harmoniqs/amicode.git && cd amicode
 git checkout aaron/night-l0-pulse-designer
 corepack enable && pnpm install
-pnpm --filter amicode package          # builds + fetches the BRANDED binary from the mirror release
+pnpm --filter amicode package          # builds + compiles the BRANDED binary from the overlay
 bash packages/extension/scripts/install.sh # Julia project + VSIX install + lab.toml
 node packages/extension/scripts/healthcheck.mjs   # expect 4/4 ✓
 ```
@@ -65,5 +65,3 @@ restarts reuse it.
 - Hardware/calibrate stages are **guided stubs** — no device I/O, and they say so.
 - Non-English locales in the chat UI still say OpenCode in places (en is the branded locale and
   the default).
-- The fork mirror (`harmoniqs/opencode`) is **private and must stay private** (MIT attribution
-  preserved; patch stack documented in `AMICODE-PATCHES.md` there).
