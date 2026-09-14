@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   extractReportBugModel,
   handleAmicodeBridgeMessage,
+  rebuildAppBundleStep,
   rebuildGitCommand,
   resolveDbBackupDir,
   resolveRebuildMode,
@@ -22,6 +23,26 @@ vi.mock("../src/onboarding_panel", async () => {
     ...actual,
     testConnection: vi.fn(async () => ({ ok: true as const })),
     writeOnboardingConfig: vi.fn(),
+  };
+});
+
+// The clipboard-image-read handler spawns up to three sequential osascript
+// calls (file-url check → PNG → TIFF), each with a 3 s timeout. On a machine
+// with no image on the clipboard all three error out, easily exceeding vitest's
+// 5 s default. Mock execFile so the clipboard path resolves instantly — the
+// test verifies wiring (dispatch + reply shape), not the real clipboard.
+// execFile is the only child_process API used by the clipboard path; exec
+// (used by the rebuild handler) is left untouched via the spread.
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFile: vi.fn(
+      (_cmd: unknown, _args: unknown, _opts: unknown, cb: (...a: unknown[]) => void) => {
+        cb(new Error("mocked: no clipboard image"), null, null);
+        return { kill: vi.fn(), pid: 0 } as unknown;
+      },
+    ),
   };
 });
 
@@ -76,6 +97,32 @@ describe("developer-tools rebuild mode — local vs main (#1115)", () => {
 
   it("the two buttons produce observably different git behavior", () => {
     expect(rebuildGitCommand("local")).not.toEqual(rebuildGitCommand("main"));
+  });
+});
+
+describe("developer-tools rebuild build:app step — deploy-guard parity (#1135)", () => {
+  it("local passes --direct-worktree with a recorded override reason (skips the #992 guard on a feature/dirty tree)", () => {
+    const step = rebuildAppBundleStep("local", "fix/plan-mode-reminder-develop");
+    expect(step.cmd).toBe("pnpm --filter amicode run build:app -- --direct-worktree");
+    expect(step.overrideReason).toBe("local rebuild: fix/plan-mode-reminder-develop working tree");
+  });
+
+  it("main builds plain — no --direct-worktree, no override (it has synced to a clean origin/main)", () => {
+    const step = rebuildAppBundleStep("main", "main");
+    expect(step.cmd).toBe("pnpm --filter amicode run build:app");
+    expect(step.overrideReason).toBeUndefined();
+  });
+
+  it("the local step never builds plain — it always carries the guard override (the bug: a plain build:app refuses)", () => {
+    const local = rebuildAppBundleStep("local", "any-branch");
+    const main = rebuildAppBundleStep("main", "any-branch");
+    expect(local.cmd).not.toEqual(main.cmd);
+    expect(local.cmd).toContain("--direct-worktree");
+    expect(main.cmd).not.toContain("--direct-worktree");
+  });
+
+  it("matches scripts/rebuild_amicode.sh's local branch: override reason is 'local rebuild: <branch> working tree'", () => {
+    expect(rebuildAppBundleStep("local", "feature-x").overrideReason).toBe("local rebuild: feature-x working tree");
   });
 });
 
