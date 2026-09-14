@@ -28,6 +28,14 @@ result files); the session ledger path; the gate verdicts the parent already rec
    with its evidence line — a PROPOSAL; the parent commits it after the gates agree.
 5. Seed the next hypotheses: 2–3 candidates ranked by testability x impact, with the
    reasoning that makes each worth a spec card.
+6. Run the skill-friction check: scan the raw artifacts for instructions-vs-reality
+   mismatches — a skill's API, path, or constant the artifacts contradict — and for
+   repeated un-skilled idioms (the same hand-rolled procedure across sessions).
+   Mismatches → findings-ledger notes (`amicode/skills-integrity/findings/`, personal
+   vault), quoting BOTH sources (the skill line and the artifact line); un-skilled
+   idioms → `proposal`-type findings (new-skill candidates, provenance-tagged with
+   sessions/artifacts). You are read-only: surface them in your return — the parent
+   files them in the ledger.
 
 **Rules:**
 

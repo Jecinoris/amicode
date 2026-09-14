@@ -41,7 +41,9 @@ the structured return. You execute it in this fresh context.
 
 **Return (final message):** the implement-issue step-7 structured yaml, verbatim
 contract — issue, status (complete | blocked | failed), branch, commit_shas,
-ac_results with per-criterion green flags, notes.
+ac_results with per-criterion green flags, skill_findings (optional: skill-vs-reality
+conflicts hit this slice — findings, never silent workarounds, per the front-line
+rule), notes.
 
 ## Model routing
 

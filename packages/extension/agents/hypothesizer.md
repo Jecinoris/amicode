@@ -13,7 +13,9 @@ NOTHING from prior conversation except the briefing and what the files on disk s
 deliberate — your value is independent eyes on the recorded state.
 
 **Briefing you receive:** the objective + standing directives; the session ledger path
-(READ IT FIRST — hypothesis table, gotchas, methodology, blocked list); pointers to prior
+(READ IT FIRST — hypothesis table, gotchas, methodology, blocked list); the campaign
+findings ledger (`amicode/skills-integrity/findings/`, personal vault) — read it as a
+prior: known-bad recipes don't become proposed approaches; pointers to prior
 experiment notes and the insight corpus where relevant.
 
 **Your job:**
