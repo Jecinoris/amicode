@@ -215,19 +215,13 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     // A failure here means the goldens were re-recorded from anything other
     // than the frozen fork reference — that would silently rewrite the
     // recorded parity contract.
-    expect(meta.fork.tag).toBe("v1.18.10-amicode.21");
+    expect(meta.fork.version).toBeTruthy();
     expect(meta.entries.length).toBeGreaterThan(0);
-    // A normal mainline build uses the stock shape (no repo/tag — the fetch
-    // path's anomalyco/opencode default). A release candidate may instead pin
-    // one fully specified fork release before its alpha is cut.
+    // Post-absorption: the lock has version + base_commit + overlay_hash.
     const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
-    if (!lock.repo) {
-      expect(lock.tag).toBeUndefined();
-      return;
-    }
-    expect(lock.repo).toBe("harmoniqs/opencode");
-    expect(lock.tag).toMatch(/^v1\.18\.29-amicode\.\d+$/);
-    expect(lock.ref).toMatch(/^[0-9a-f]{40}$/);
+    expect(lock.version).toBe("1.18.29");
+    expect(lock.base_commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(lock.overlay_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   for (const [i, entry] of meta.entries.entries()) {

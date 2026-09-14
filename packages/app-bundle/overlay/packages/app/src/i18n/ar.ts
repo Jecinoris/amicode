@@ -762,7 +762,7 @@ export const dict = {
   "settings.general.row.opencodePath.title": "opencode repo path",
   "settings.general.row.opencodePath.description":
     "Path to your local opencode repository root (the binary is resolved from here)",
-  "settings.general.row.opencodePath.placeholder": "~/harmoniqs/opencode",
+  "settings.general.row.opencodePath.placeholder": "/path/to/opencode",
   "settings.general.row.opencodePath.error.notFound": "Binary not found at this path",
   "settings.general.row.opencodePath.error.notExecutable": "Binary exists but is not executable",
   "settings.general.row.amicodePath.title": "Amicode repo path",

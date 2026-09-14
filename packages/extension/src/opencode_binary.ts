@@ -8,8 +8,8 @@ export interface ResolvedBinary {
   source: "config-override" | "vendored";
 }
 
-/** Must stay in lockstep with opencode.lock.json's `platforms` — a fetch_opencode
- *  test asserts the two sets are equal, since they live in different files. */
+/** The three platforms we ship binaries for. Must stay in lockstep with
+ *  fetch_opencode.mjs's KNOWN_PLATFORMS and build_binary.mjs's targets. */
 export const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64"] as const;
 
 /**

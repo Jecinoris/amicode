@@ -25,8 +25,7 @@ export interface RebuildErrorInfo {
   detail?: string
 }
 
-/** Default repo paths autofilled when the toggle is turned ON with empty fields. */
-const DEFAULT_OPENCODE_PATH = "~/harmoniqs/opencode"
+/** Default repo path autofilled when the toggle is turned ON with empty fields. */
 const DEFAULT_AMICODE_PATH = "~/harmoniqs/amicode"
 
 export function createDeveloperToolsController() {
@@ -210,9 +209,6 @@ export function createDeveloperToolsController() {
     setEnabled: (value: boolean) => {
       // Autofill paths with defaults when toggling ON with empty fields
       if (value) {
-        if (!settings.developer.opencodePath()) {
-          settings.developer.setOpencodePath(DEFAULT_OPENCODE_PATH)
-        }
         if (!settings.developer.amicodePath()) {
           settings.developer.setAmicodePath(DEFAULT_AMICODE_PATH)
         }

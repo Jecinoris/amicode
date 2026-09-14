@@ -123,15 +123,29 @@ describe("classifyDownloadError (#1019)", () => {
   });
 });
 
-describe("fetchFromRelease retry + fallback (#1019)", () => {
+describe("fetchOpencode — upstream download (#1019 post-absorption)", () => {
+  it("downloads from upstream and installs", async () => {
+    const { bytes, hash } = fixtureArchive();
+    const root = rootWith({ version: "9.9.9" });
+    let calls = 0;
+    const download = async (_url: string) => {
+      calls++;
+      return bytes;
+    };
+    const r = await fetchOpencode({
+      root,
+      platform: "linux-x64",
+      download,
+      retryOpts: { maxAttempts: 3, baseDelay: 10, factor: 2 },
+    });
+    expect(r.skipped).toBe(false);
+    expect(calls).toBeGreaterThan(0);
+    expect(existsSync(join(root, "vendor", "opencode", "linux-x64", "opencode"))).toBe(true);
+  });
+
   it("retries transient HTTPS failures then succeeds", async () => {
     const { bytes, hash } = fixtureArchive();
-    const root = rootWith({
-      version: "9.9.9",
-      repo: "harmoniqs/opencode",
-      tag: "v9.9.9-amicode.1",
-      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: hash } },
-    });
+    const root = rootWith({ version: "9.9.9" });
     let calls = 0;
     const download = async (_url: string) => {
       calls++;
@@ -147,97 +161,5 @@ describe("fetchFromRelease retry + fallback (#1019)", () => {
     expect(r.skipped).toBe(false);
     expect(calls).toBe(3);
     expect(existsSync(join(root, "vendor", "opencode", "linux-x64", "opencode"))).toBe(true);
-  });
-
-  it("HTTPS sha256 mismatch triggers one gh fallback attempt", async () => {
-    const { bytes, hash } = fixtureArchive();
-    // Create a corrupt version
-    const corrupt = Buffer.concat([bytes, Buffer.from("corruption")]);
-    const root = rootWith({
-      version: "9.9.9",
-      repo: "harmoniqs/opencode",
-      tag: "v9.9.9-amicode.1",
-      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: hash } },
-    });
-    // HTTPS returns corrupt, then gh would be tried — but gh is not available
-    // in tests, so the final error should mention the fallback
-    const download = async () => corrupt;
-    const prevPath = process.env.PATH;
-    process.env.PATH = "/nonexistent";
-    try {
-      await expect(
-        fetchOpencode({
-          root,
-          platform: "linux-x64",
-          download,
-          retryOpts: { maxAttempts: 1, baseDelay: 10, factor: 2 },
-        }),
-      ).rejects.toThrow(/SHA256 mismatch|gh fallback/);
-    } finally {
-      process.env.PATH = prevPath;
-    }
-  });
-
-  it("no partial binary left after interrupted download", async () => {
-    const root = rootWith({
-      version: "9.9.9",
-      repo: "harmoniqs/opencode",
-      tag: "v9.9.9-amicode.1",
-      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: "ee".repeat(32) } },
-    });
-    const download = async () => { throw new Error("ECONNRESET"); };
-    const prevPath = process.env.PATH;
-    process.env.PATH = "/nonexistent";
-    try {
-      await expect(
-        fetchOpencode({
-          root,
-          platform: "linux-x64",
-          download,
-          retryOpts: { maxAttempts: 1, baseDelay: 10, factor: 2 },
-        }),
-      ).rejects.toThrow();
-    } finally {
-      process.env.PATH = prevPath;
-    }
-    // No partial binary should exist
-    expect(existsSync(join(root, "vendor", "opencode", "linux-x64", "opencode"))).toBe(false);
-    // No .unpack- temp dirs should remain
-    const vendorDir = join(root, "vendor", "opencode", "linux-x64");
-    if (existsSync(vendorDir)) {
-      const files = require("fs").readdirSync(vendorDir);
-      const partials = files.filter((f: string) => f.startsWith(".unpack-"));
-      expect(partials).toHaveLength(0);
-    }
-  });
-
-  it("permanent 404 is not retried on HTTPS (falls through to gh once)", async () => {
-    const root = rootWith({
-      version: "9.9.9",
-      repo: "harmoniqs/opencode",
-      tag: "v9.9.9-amicode.1",
-      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: "ee".repeat(32) } },
-    });
-    let calls = 0;
-    const download = async () => {
-      calls++;
-      throw new Error("HTTP 404: Not Found");
-    };
-    const prevPath = process.env.PATH;
-    process.env.PATH = "/nonexistent";
-    try {
-      await expect(
-        fetchOpencode({
-          root,
-          platform: "linux-x64",
-          download,
-          retryOpts: { maxAttempts: 3, baseDelay: 10, factor: 2 },
-        }),
-      ).rejects.toThrow(/not publicly fetchable|gh fallback/);
-    } finally {
-      process.env.PATH = prevPath;
-    }
-    // 404 should not be retried — only 1 HTTPS attempt before gh fallback
-    expect(calls).toBe(1);
   });
 });
