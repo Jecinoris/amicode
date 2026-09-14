@@ -41,6 +41,7 @@ import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
 import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
+import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
 import { createProject, listProjects } from "./project";
 import {
   addCustomConnectionResponse,
@@ -306,6 +307,11 @@ export interface FleetRouteDeps {
   hub: { getUrl(): string | undefined };
   /** The staging receipt — provenance surfacing, never merged fields. */
   receipt: FleetStagingReceipt;
+  /** #1131 — the staged fleet program's receipt (amicissimo#418's manifest,
+   *  composed into the mode-machine family's injectable knobs). Present
+   *  whenever the fleet block arms; the cockpit's provenance surface says
+   *  where the tuning came from. */
+  program?: FleetProgramReceipt;
   /** Whether the engine mint is armed (for the mint registry). */
   engineArmed: boolean;
   /** #392 (D6): the posture detector — the status route reads its live
@@ -338,6 +344,7 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
         mints: mintRegistry({ mode, engineArmed: deps.engineArmed, hubCredential }),
         hub_credential: hubCredential,
         staging: deps.receipt,
+        ...(deps.program ? { program: deps.program } : {}),
       }),
     };
   });
@@ -462,6 +469,17 @@ export function createAmicodeService(
       overlaySource: opts.fleet.overlaySource,
     });
     if (staging.staged) {
+      // #1131: the staged fleet program (amicissimo#418) — resolved through
+      // the same entitlement gate inputs; its receipt rides the fleet status
+      // detail (the cockpit says where the tuning came from). The composed
+      // values feed the mode-machine family's injectable knobs wherever the
+      // machinery is constructed (resolveFleetProgram + composeFleetConfigs
+      // is the seam); an unentitled boot never reaches this line.
+      const program = resolveFleetProgram({
+        entitlements: opts.fleet.entitlements,
+        entitlementConfigDir: opts.fleet.entitlementConfigDir,
+        overlaySource: opts.fleet.overlaySource,
+      });
       const readCredential = (): HubCredentialRead => readHubCredential();
       // #392 (D6): the posture detector — the outcome stream's consumer.
       // Every data-plane outcome (proxy, write pipeline, projection) feeds
@@ -515,6 +533,7 @@ export function createAmicodeService(
         },
         hub: opts.fleet.hub,
         receipt: staging.receipt,
+        program: program.receipt,
         engineArmed: opts.engine !== undefined,
         monitor,
         ...(tunnelConfigPath !== undefined ? { tunnelConfigPath } : {}),
