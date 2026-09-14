@@ -66,7 +66,14 @@ import {
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
-import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { goStandalone, migrateLegacyFallback } from "./fleet_fallback";
+import {
+  readFleetTopology,
+  readFleetTopologyWithRefresh,
+  fleetConfigOf,
+  verbRunnerWithPaths,
+  type VerbRunResult,
+} from "./fleet_topology";
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
@@ -116,15 +123,47 @@ let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
-/** Fleet client detection — reads role from ~/.amico/ops/fleet/fleet.json.
- *  A fleet client (role="client" in fleet.json, guard installed) must NOT spawn
- *  a local server; it rides the tunnel. This check prevents the "opencode failed
- *  to start within 30s" storm when the guard correctly `exit 1`s. (#338) */
-function isFleetClientGuard(binary: string | undefined): boolean {
+/** #1106: the fleet-projection verb runner — set once in activate() once the
+ *  amico-run launcher dir is known (PATH-augmented exactly like the server
+ *  spawn's PATH, so `amico` resolves in the extension host and an enrolled
+ *  machine never misroutes to the CLI-absent branch). Undefined until then →
+ *  the fleet_topology default (PATH-only). */
+let fleetVerbRunner: (() => VerbRunResult) | undefined;
+
+/** Fleet client detection — #1106 (P3b-2): the role comes from the
+ *  verb-refreshed projection cache through @amicode/schema's reader
+ *  (fleet_topology.ts), NEVER the raw fleet.json — amicissimo parses and
+ *  publishes, amicode consumes. A fleet client (role="client", guard
+ *  installed) must NOT spawn a local server; it rides the tunnel. This check
+ *  prevents the "opencode failed to start within 30s" storm when the guard
+ *  correctly `exit 1`s. (#338; the raw-read removal is #1106.)
+ *
+ *  The projection read's rendered states surface to the caller's log: the
+ *  bootstrap exception (exit 75 / CLI-absent — base-standalone STATED with
+ *  the pointer, the mode field untouched), a broken cache (the reader's loud
+ *  rejection + the refresh pointer), and the D1 freshness verdict each render
+ *  — never a silent fallthrough, never a raw-file read. The GUARD remains the
+ *  enforcement (it fails closed on a broken verb); this check is the UX layer. */
+function isFleetClientGuard(binary: string | undefined, log: (line: string) => void = () => {}): boolean {
   if (process.platform !== "darwin") return false;
   if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
-  // Role from fleet.json — "client" means ride the tunnel, anything else means spawn locally
-  return isFleetClient();
+  const decision = readFleetTopologyWithRefresh({ runVerb: fleetVerbRunner });
+  if (decision.state.kind === "ok" && decision.state.verdict !== undefined) {
+    log(`[fleet] projection freshness: ${decision.state.verdict}${decision.state.advisory === undefined ? "" : ` — ${decision.state.advisory}`}`);
+  }
+  if (decision.bootstrap !== null) {
+    log(`[fleet] ${decision.bootstrap.stated}`);
+    return false; // the base-standalone floor: spawn locally (stated, not silent)
+  }
+  if (decision.state.kind === "broken") {
+    log(`[fleet] ${decision.state.detail}`);
+    return false; // honest degraded spawn — the guard still enforces client refusal
+  }
+  if (decision.state.kind === "absent") {
+    log(`[fleet] ${decision.state.detail}`);
+    return false;
+  }
+  return decision.state.role === "client";
 }
 
 /** #398 (slice 4e): the fleet activation config, read from the workspace
@@ -486,6 +525,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 3. opencode project bootstrap
   const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);
+  // #1106: the fleet-projection refresh resolves `amico` the same way the
+  // server spawn does — PATH prepended with the launcher dir.
+  fleetVerbRunner = verbRunnerWithPaths(amicoRunBinDir === undefined ? [] : [amicoRunBinDir]);
   // Configured skill-index overrides (spec-20260704-113005 §3) — an empty/unset
   // array falls through to the module defaults (undefined → the `??` default).
   const cfgArr = (key: string): string[] | undefined => {
@@ -652,13 +694,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
-  // Fleet client: guard would `exit 1` on this host (role=client in fleet.json) —
-  // don't spawn and storm "opencode failed to start within 30s".
-  // Ride the tunnel instead; "Go Standalone" switches to local mode permanently.
-  const fleetClient = isFleetClientGuard(binary);
+  // Fleet client: guard would `exit 1` on this host (role=client in the
+  // projection topology) — don't spawn and storm "opencode failed to start
+  // within 30s". Ride the tunnel instead; "Go Standalone" switches to local
+  // mode permanently. (#338; the projection read is #1106.)
+  const fleetClient = isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line));
   if (binary !== undefined && fleetClient) {
-    const fleetCfg = readFleetConfig();
-    const fleetPort = fleetCfg?.canonical?.port ?? 4096;
+    const topology = readFleetTopology();
+    const fleetPort = topology.kind === "ok" ? (topology.canonical?.port ?? 4096) : 4096;
     opencodeChannel.appendLine(`[fleet] client mode — guard ${binary} would refuse on ${os.hostname()} — riding tunnel 127.0.0.1:${fleetPort}`);
     opencodeChannel.appendLine(`[fleet] hint: canonical offline? Palette → Amicode: Fleet — Go Standalone`);
     // Distiller still arms on the client (uses vendored binary directly, not the guard)
@@ -1452,29 +1495,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerOpencodeUpdater(ctx, opencodeChannel);
 
   // Fleet mode — "Go Standalone" per CONTEXT.md (#338).
-  // Config: ~/.amico/ops/fleet/fleet.json (no file = standalone).
+  // Config: ~/.amico/ops/fleet/fleet.json (no file = standalone) — the WRITER's
+  // destination; every READ flows through the projection cache (#1106).
   // Migrate legacy fallback.json on activation.
   migrateLegacyFallback();
 
   const fleetStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   ctx.subscriptions.push(fleetStatusItem);
+  /** #1106: the status bar renders the projection topology — role, canonical
+   *  target, and the D1 freshness verdict SURFACE here (stale/unknown get a
+   *  badge; unknown means force-refetch, and a fresh read with no previous
+   *  renders no badge — no noise). */
+  let lastFleetProjection: ReturnType<typeof readFleetTopology> | undefined;
   const refreshFleetStatus = (): void => {
-    const role = getFleetRole();
-    if (role === "client") {
-      const cfg = readFleetConfig();
-      fleetStatusItem.text = "$(cloud) Fleet: client";
-      fleetStatusItem.tooltip = `Fleet client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096}`;
+    const previous = lastFleetProjection !== undefined && lastFleetProjection.kind === "ok" ? lastFleetProjection.projection : null;
+    const state = readFleetTopology({ previous });
+    lastFleetProjection = state;
+    if (state.kind === "ok" && state.role === "client") {
+      const badge = state.verdict === undefined || state.verdict === "fresh" ? "" : ` (${state.verdict})`;
+      fleetStatusItem.text = `$(cloud) Fleet: client${badge}`;
+      fleetStatusItem.tooltip = `Fleet client → ${state.canonical?.host ?? "unknown"}:${state.canonical?.port ?? 4096}`
+        + (state.advisory === undefined ? "" : `\n${state.advisory}`);
       fleetStatusItem.command = "amicode.fleet.goStandalone";
       fleetStatusItem.show();
     } else {
+      if (state.kind === "broken") {
+        opencodeChannel.appendLine(`[fleet] ${state.detail}`);
+      }
       fleetStatusItem.hide();
     }
   };
   refreshFleetStatus();
 
   const runFleetGoStandalone = async (): Promise<void> => {
-    const role = getFleetRole();
-    if (role === "standalone") {
+    const topology = readFleetTopology();
+    if (topology.kind === "ok" && topology.role === "standalone") {
       void vscode.window.showInformationMessage("Amicode: already in standalone mode (local server).");
       return;
     }
@@ -1489,6 +1544,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevBinary = cfg.get<string>("opencodeBinary", "");
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
+    // #1106: the write changed the file amicissimo's ONE parser reads — refresh
+    // the projection cache through the verb NOW so the guard + status bar + health
+    // checks see role=standalone immediately (the coherence rule: every fleet.json
+    // writer is followed by a cache refresh). A failed refresh is stated, never
+    // silent: until it lands, the consumers' cache still shows the old role.
+    try {
+      const refreshed = readFleetTopologyWithRefresh({ runVerb: fleetVerbRunner });
+      if (refreshed.state.kind === "ok" && refreshed.state.role === "standalone") {
+        opencodeChannel.appendLine("[fleet] go standalone: projection cache refreshed (role=standalone)");
+      } else if (refreshed.bootstrap !== null) {
+        opencodeChannel.appendLine(`[fleet] go standalone: projection refresh bootstrapped — ${refreshed.bootstrap.stated}`);
+      } else {
+        opencodeChannel.appendLine(`[fleet] go standalone: projection refresh did not confirm standalone — ${refreshed.state.kind === "broken" ? refreshed.state.detail : `role=${refreshed.state.kind === "ok" ? refreshed.state.role : "unknown"}`}`);
+      }
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] go standalone: projection refresh failed — ${(e as Error).message}`);
+    }
     try {
       // Clear the fleet guard override → vendored binary, ephemeral port
       await cfg.update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
@@ -1579,13 +1651,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // from the CLIENT's extension host, which is not hosted on the hub, so the
   // restart can never kill its own runtime — the 2026-08-30 self-host trap.
   const runRestartHub = async (): Promise<void> => {
-    if (getFleetRole() !== "client") {
+    // #1106: the client check + hub target come from the projection topology
+    // (the ONE read path) — a broken/absent projection renders honestly here.
+    const topology = readFleetTopology();
+    if (topology.kind === "broken") {
+      void vscode.window.showErrorMessage(`Amicode: fleet projection is broken — ${topology.detail}`);
+      return;
+    }
+    if (topology.kind !== "ok" || topology.role !== "client") {
       void vscode.window.showInformationMessage(
         "Amicode: this machine is not a fleet client — use 'Amicode: Restart opencode server' for the local server.",
       );
       return;
     }
-    const target = resolveHubTarget(readFleetConfig());
+    const target = resolveHubTarget(fleetConfigOf(topology));
     if (!target) {
       void vscode.window.showErrorMessage("Amicode: fleet config has no canonical sshAlias — run 'Amicode: Fleet Repair'.");
       return;
@@ -2048,9 +2127,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // clears the "Something went wrong" state instead of being a no-op.
       opencodeChannel.appendLine(`[boot] restart requested`);
       // Fleet client: no local server to restart — just re-probe the tunnel
-      if (binary !== undefined && isFleetClientGuard(binary)) {
-        const fleetCfgRestart = readFleetConfig();
-        const restartPort = fleetCfgRestart?.canonical?.port ?? 4096;
+      if (binary !== undefined && isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line))) {
+        const topologyRestart = readFleetTopology();
+        const restartPort = topologyRestart.kind === "ok" ? (topologyRestart.canonical?.port ?? 4096) : 4096;
         opencodeChannel.appendLine(`[fleet] client restart — re-probing tunnel 127.0.0.1:${restartPort}`);
         statusBar?.setServerReady(false);
         opencodeReadyUrl = undefined;

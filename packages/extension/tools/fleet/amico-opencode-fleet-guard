@@ -1,30 +1,93 @@
 #!/bin/bash
 # amico-opencode-fleet-guard — fleet guard for the Amicode extension.
-# Reads fleet role from ~/.amico/ops/fleet/fleet.json. On a machine whose role
-# is "client", exit 1 immediately: the extension's health probe then rides the
+# Reads the fleet role from the verb-refreshed PROJECTION CACHE
+# (~/.amico/ops/fleet/projection.json), refreshed by
+# `amico fleet status --projection` — amicissimo's parser (behind the CLI) is
+# the ONLY reader of the machine-local fleet config; this guard never reads
+# that raw file (#1106, fleet rearchitect P3b-2; the silent-fork counter-
+# measures remain #279/#324/#338). On a machine whose projection role is
+# "client", exit 1 immediately: the extension's health probe then rides the
 # SSH tunnel to the canonical server, or fails closed if the tunnel is down —
-# a client must NEVER spawn a local fork. (harmoniqs/amicode#279, #324, #338)
+# a client must NEVER spawn a local fork.
 #
-# Fleet config: ~/.amico/ops/fleet/fleet.json
-#   { "role": "standalone"|"server"|"client", "canonical": { "host": "...", "port": 4096, "sshAlias": "..." } }
-#   No file = standalone (safe default — spawns locally like pre-fleet Amicode).
+# The projection cache is pinned to contract v1: an artifact speaking another
+# contract (or corrupt bytes) is UNUSABLE, never guessed from. An absent or
+# unusable cache is refreshed ONCE through the verb — the CLI is the only
+# door. The verb's bootstrap exception (exit 75) and a CLI-absent machine get
+# the IDENTICAL honest branch: base-standalone STATED with the grant pointer,
+# then the base floor's local spawn (stated, never silent). A verb FAILURE
+# (any other exit) fails CLOSED — an unreadable topology must never silently
+# fork a client, and the repair path is stated.
+#
+# Cache convention: <home>/.amico/ops/fleet/projection.json — the same
+# artifact the extension (fleet_topology.ts) and the installer consume.
 #
 # Install to ~/.local/bin on every host and point amicode.opencodeBinary at it:
 #   cp tools/fleet/amico-opencode-fleet-guard ~/.local/bin/amico-opencode-fleet-guard
 #   # then in settings.json (scope: machine): "amicode.opencodeBinary": "$HOME/.local/bin/amico-opencode-fleet-guard"
 #
-# Go Standalone (CONTEXT.md): sets role to "standalone" in fleet.json (or deletes
-# it). The guard then allows a local spawn — no tunnel required.
+# Go Standalone (CONTEXT.md): the mode flow writes role=standalone to the
+# machine-local config (amicissimo's parser input) and refreshes the
+# projection cache through the verb; the guard then reads role=standalone
+# and allows a local spawn — no tunnel required.
 
-FLEET_CONFIG="$HOME/.amico/ops/fleet/fleet.json"
+PROJECTION="$HOME/.amico/ops/fleet/projection.json"
 
-# Determine role from fleet.json. No file or parse failure = standalone.
-ROLE="standalone"
-if [ -f "$FLEET_CONFIG" ]; then
-  # Extract role with lightweight JSON parsing (no jq dependency)
-  PARSED_ROLE="$(grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*"role"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-  if [ -n "$PARSED_ROLE" ]; then
-    ROLE="$PARSED_ROLE"
+# The role from the projection cache: usable (contract v1) + the topology
+# role key, or an unusable artifact (exit 1). An EMPTY role from a usable
+# artifact is the lawful standalone base default (no topology section).
+projection_role() {
+  [ -f "$PROJECTION" ] || return 1
+  grep -Eq '"contract_version"[[:space:]]*:[[:space:]]*1([^0-9]|$)' "$PROJECTION" 2>/dev/null || return 1
+  grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' "$PROJECTION" 2>/dev/null | head -1 | sed 's/.*"role"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+  return 0
+}
+
+# The CLI door: `amico` on PATH, else the known dev-checkout launchers.
+amico_cli() {
+  if command -v amico >/dev/null 2>&1; then command -v amico; return 0; fi
+  for root in "$HOME/harmoniqs/amicode" "$HOME/armonia/repos/amicode"; do
+    for cand in "$root/packages/extension/bin/launcher/amico" "$root/packages/amico-run/launcher/amico"; do
+      if [ -x "$cand" ]; then printf '%s' "$cand"; return 0; fi
+    done
+  done
+  return 1
+}
+
+ROLE_USABLE=0
+ROLE="$(projection_role)" && ROLE_USABLE=1
+if [ "$ROLE_USABLE" -ne 1 ]; then
+  ROLE=""
+  # Absent/unusable cache → refresh ONCE through the verb (the CLI is the only door).
+  if AMICO_BIN="$(amico_cli)"; then
+    VERB_CODE=0
+    "$AMICO_BIN" fleet status --projection >/dev/null 2>&1 || VERB_CODE=$?
+    if [ "$VERB_CODE" -eq 0 ]; then
+      ROLE="$(projection_role)" && ROLE_USABLE=1
+      if [ "$ROLE_USABLE" -ne 1 ]; then
+        echo "[amico-fleet-guard] the refreshed fleet projection at $PROJECTION is unusable (contract not v1, or corrupt bytes) — refusing to guess the topology; repair: amico fleet status --projection" >&2
+        exit 1
+      fi
+    elif [ "$VERB_CODE" -eq 75 ]; then
+      # The bootstrap exception — base-standalone STATED with the pointer, then
+      # the base floor's local spawn. The mode field is untouched (spec
+      # invariant 7): stating base-standalone is a floor report, not a write.
+      echo "[amico-fleet-guard] base-standalone (bootstrap exception — the fleet-authority verb exited 75): this install holds no fleet grant" >&2
+      echo "[amico-fleet-guard]   grant path: repo access to harmoniqs/amicissimo + the \`amicissimo\` code in ~/.amico/amicode/entitlements.toml + the amicissimo checkout (AMICISSIMO_ROOT)" >&2
+      echo "[amico-fleet-guard] spawning the base-standalone local server — stated, never silent" >&2
+      ROLE=""
+    else
+      # A verb failure is NOT bootstrap — fail closed, state the repair.
+      echo "[amico-fleet-guard] the fleet-authority verb failed (exit $VERB_CODE) — the fleet topology cannot be trusted, and a client must never silently fork" >&2
+      echo "[amico-fleet-guard]   repair: amico fleet status --projection (see its output), or 'Amicode: Fleet — Go Standalone'" >&2
+      exit 1
+    fi
+  else
+    # CLI absent → the IDENTICAL bootstrap branch (stated base-standalone + pointer).
+    echo "[amico-fleet-guard] base-standalone (bootstrap exception — the amico CLI is absent, so the fleet-authority verb cannot run): this install holds no fleet grant" >&2
+    echo "[amico-fleet-guard]   grant path: repo access to harmoniqs/amicissimo + the \`amicissimo\` code in ~/.amico/amicode/entitlements.toml + the amicissimo checkout (AMICISSIMO_ROOT)" >&2
+    echo "[amico-fleet-guard] spawning the base-standalone local server — stated, never silent" >&2
+    ROLE=""
   fi
 fi
 
@@ -35,7 +98,8 @@ if [ "$ROLE" = "client" ]; then
   exit 1
 fi
 
-# Standalone or server: resolve opencode binary — frozen first, then VSIX, then dev checkout.
+# Standalone or server (or the stated base-standalone bootstrap): resolve
+# opencode binary — frozen first, then VSIX, then dev checkout.
 FROZEN="$HOME/.amico/server/bin/opencode"
 VSIX_BIN="$(ls -dt "$HOME"/.vscode/extensions/harmoniqs.amicode-*/vendor/opencode/darwin-arm64/opencode 2>/dev/null | head -1)"
 DEV_BIN="$(ls -dt "$HOME"/harmoniqs/amicode/packages/extension/vendor/opencode/darwin-arm64/opencode "$HOME"/armonia/repos/amicode/packages/extension/vendor/opencode/darwin-arm64/opencode 2>/dev/null | head -1)"

@@ -26,6 +26,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   FLEET_CONTRACT_VERSION,
   SUPPORTED_PROJECTION_SCHEMA_VERSIONS,
@@ -36,6 +38,8 @@ import {
   freshnessBetween,
   freshnessAdvisory,
   renderFleetStatus,
+  fleetProjectionCachePath,
+  FLEET_PROJECTION_CACHE_RELPATH,
   type FleetProjection,
 } from "../src/fleet_projection.js";
 
@@ -268,5 +272,21 @@ describe("the reader never computes age from a wall clock (D1 source guard)", ()
   it("the reader module has no Date/now reference at all — freshness renders carried fields only", () => {
     const src = readFileSync(fileURLToPath(new URL("../src/fleet_projection.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/\bDate\b|\bnow\b|performance\.now|process\.hrtime/);
+  });
+});
+
+// ── the stable projection-cache convention (#1106, fleet rearchitect P3b-2) ───
+
+describe("the stable projection-cache path convention (#1106)", () => {
+  it("fleetProjectionCachePath resolves the live-layout precedent: <home>/.amico/ops/fleet/projection.json", () => {
+    expect(fleetProjectionCachePath("/home/tester")).toBe("/home/tester/.amico/ops/fleet/projection.json");
+  });
+
+  it("the default home is the process home — the ONE path every consumer (verb, extension, guard) reads", () => {
+    expect(fleetProjectionCachePath()).toBe(join(homedir(), ".amico", "ops", "fleet", "projection.json"));
+  });
+
+  it("the relpath constant is the documented convention (scripts and the extension compose it from $HOME)", () => {
+    expect(FLEET_PROJECTION_CACHE_RELPATH).toBe(join(".amico", "ops", "fleet", "projection.json"));
   });
 });

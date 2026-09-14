@@ -24,6 +24,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { managedPathEntries } from "./opencode_updater_wiring";
+import { readFleetTopology } from "./fleet_topology";
 
 export interface AmicodeTerminalDeps {
   extensionPath: string;
@@ -92,14 +93,13 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     if (sessionDb) env.OPENCODE_DB = sessionDb;
     if (configDirOverride) env.OPENCODE_CONFIG_DIR = configDirOverride;
 
-    // Carry fleet standalone hint as env for shell scripts that check it
+    // Carry fleet standalone hint as env for shell scripts that check it.
+    // #1106: the role comes from the projection cache through the ONE reader
+    // (fleet_topology), never a raw fleet-config parse; the legacy fallback
+    // marker stays an existence probe (probed, never parsed).
     try {
-      const fleetJson = path.join(os.homedir(), ".amico", "ops", "fleet", "fleet.json");
-      if (fs.existsSync(fleetJson)) {
-        const cfg = JSON.parse(fs.readFileSync(fleetJson, "utf8"));
-        if (cfg?.role === "standalone") env.AMICO_FLEET_STANDALONE = "1";
-      }
-      // Legacy fallback.json — also treat as standalone hint
+      const topology = readFleetTopology();
+      if (topology.kind === "ok" && topology.role === "standalone") env.AMICO_FLEET_STANDALONE = "1";
       const fallback = path.join(os.homedir(), ".amico", "ops", "fleet", "fallback.json");
       if (fs.existsSync(fallback)) env.AMICO_FLEET_STANDALONE = "1";
     } catch {}

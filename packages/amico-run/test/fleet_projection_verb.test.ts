@@ -25,6 +25,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fleetVerb } from "../src/fleet_verb.js";
 import { fleetProjectionStatus, FLEET_BOOTSTRAP_EXIT, type FleetProjectionDeps } from "../src/fleet_projection_verb.js";
+import { fleetProjectionCachePath } from "@amicode/schema";
+
+const E1 = "44444444-4444-4444-8444-444444444444";
 
 // The committed fixture projection — a full document shaped on amicissimo's
 // Python publisher fixtures (client role → fleet mode, health + locks present).
@@ -38,7 +41,9 @@ afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A hermetic world: an entitlements file carrying the `amicissimo` code, a
  *  checkout dir, and a runPublisher that copies the fixture projection to the
- *  outPath the verb handed it — the real publisher's #414 contract, faked. */
+ *  outPath the verb handed it — the real publisher's #414 contract, faked.
+ *  The #1106 cache defaults INTO THE TMP DIR — a suite run never touches the
+ *  machine's real ~/.amico/ops/fleet/projection.json. */
 function grantedWorld(over: Partial<FleetProjectionDeps> = {}, fixture: string = FIXTURE.pathname) {
   const entitlements = join(tmp, "entitlements.toml");
   writeFileSync(entitlements, 'codes = ["amicissimo"]\n');
@@ -47,6 +52,7 @@ function grantedWorld(over: Partial<FleetProjectionDeps> = {}, fixture: string =
   const deps: FleetProjectionDeps = {
     readFile: (p) => (p === entitlements ? 'codes = ["amicissimo"]' : fixtureFileSafe(p, fixture)),
     checkDir: (p) => p === checkout,
+    cachePath: join(tmp, "hermetic-cache.json"),
     runPublisher: (inv) => {
       calls.push(inv);
       writeFileSync(inv.outPath, readFileSync(fixture, "utf8"));
@@ -201,6 +207,84 @@ describe("the bootstrap exception (no entitlement / no checkout)", () => {
     const r = run(["--checkout", w.checkout, "--config", w.entitlements, "--bogus"], w.deps);
     expect(r.code).toBe(64);
     expect((r.json.errors as string[]).join(" ")).toContain("--bogus");
+  });
+});
+
+// ── the stable projection-cache convention (#1106, P3b-2) ──────────────────────
+
+describe("the stable projection-cache convention (#1106)", () => {
+  it("a successful status refreshes the cache at the known path with the published bytes", () => {
+    const w = grantedWorld();
+    const cachePath = join(tmp, "ops", "fleet", "projection.json");
+    const writes: Array<{ p: string; content: string }> = [];
+    const deps: FleetProjectionDeps = { ...w.deps, cachePath, writeCache: (p, content) => writes.push({ p, content }) };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].p).toBe(cachePath);
+    expect(writes[0].content).toBe(readFileSync(FIXTURE.pathname, "utf8")); // the published bytes, verbatim
+  });
+
+  it("the default cachePath is the live-layout convention (~/.amico/ops/fleet/projection.json), never guessed per-call", () => {
+    const w = grantedWorld();
+    const writes: Array<{ p: string; content: string }> = [];
+    const { cachePath: _omit, ...rest } = w.deps; // hermetic default stays out — assert the convention path
+    const deps: FleetProjectionDeps = { ...rest, writeCache: (p, content) => writes.push({ p, content }) };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(writes[0].p).toBe(fleetProjectionCachePath());
+  });
+
+  it("only a projection the reader VALIDATED lands in the cache — a rejected contract version never clobbers it", () => {
+    const stale = join(tmp, "stale-projection.json");
+    writeFileSync(stale, JSON.stringify({ schema_version: 1, contract_version: 2, sections: {} }));
+    const w = grantedWorld({}, stale);
+    const writes: Array<{ p: string; content: string }> = [];
+    const deps: FleetProjectionDeps = { ...w.deps, cachePath: join(tmp, "cache.json"), writeCache: (p, content) => writes.push({ p, content }) };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(64); // the loud rejection
+    expect(writes).toHaveLength(0); // and the cache was never touched
+  });
+
+  it("the bootstrap exception (75) leaves the cache untouched — base-standalone is stated, not cached", () => {
+    const writes: Array<{ p: string; content: string }> = [];
+    const deps: FleetProjectionDeps = {
+      readFile: () => null, // no entitlements
+      checkDir: () => true,
+      writeCache: (p, content) => writes.push({ p, content }),
+    };
+    const r = run(["--config", join(tmp, "entitlements.toml")], deps);
+    expect(r.code).toBe(FLEET_BOOTSTRAP_EXIT);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("the success JSON carries additive machine fields for script consumers: role + canonical + cache_path", () => {
+    const w = grantedWorld();
+    const cachePath = join(tmp, "cache.json");
+    const deps: FleetProjectionDeps = { ...w.deps, cachePath, writeCache: () => {} };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(r.json.role).toBe("client");
+    expect(r.json.canonical).toMatchObject({ host: "hq-hub-01.example.internal", port: 4096, sshAlias: "hq-hub-01" });
+    expect(r.json.cache_path).toBe(cachePath);
+  });
+
+  it("a projection without a topology section still succeeds and caches — the machine fields render absent, never invented", () => {
+    const bare = join(tmp, "bare-projection.json");
+    writeFileSync(bare, JSON.stringify({
+      schema_version: 1,
+      contract_version: 1,
+      publisher: { identity: "test", published_at: "2026-09-13T12:00:00Z" },
+      freshness: { counter: 1, hub_epoch: E1 },
+      sections: { mode: { value: "standalone" } },
+    }));
+    const w = grantedWorld({}, bare);
+    const cachePath = join(tmp, "cache.json");
+    const deps: FleetProjectionDeps = { ...w.deps, cachePath, writeCache: () => {} };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(r.json.role).toBeUndefined();
+    expect(r.json.canonical).toBeUndefined();
   });
 });
 

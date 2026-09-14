@@ -39,8 +39,25 @@
 // established). Fleet-class IMPLEMENTATION stays amicissimo overlay content
 // (spec R1); a reader is a consumer.
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export const FLEET_CONTRACT_VERSION = 1;
+
+/** The stable projection-cache convention's path fragment (amicode#1106, fleet
+ *  rearchitect P3b-2): the verb refreshes a published, contract-validated
+ *  projection at `<home>/.amico/ops/fleet/projection.json` — the live-layout
+ *  precedent (beside fleet.json, which only amicissimo's ONE parser reads) —
+ *  and every amicode consumer (extension, installer, guard) reads THAT
+ *  artifact, never the raw file. Scripts without a TS runtime compose it from
+ *  $HOME with this exact fragment. */
+export const FLEET_PROJECTION_CACHE_RELPATH = join(".amico", "ops", "fleet", "projection.json");
+
+/** The cache path under a given home (default: the process home). ONE
+ *  definition, consumed by the verb (writer) and the extension (reader). */
+export function fleetProjectionCachePath(home: string = homedir()): string {
+  return join(home, FLEET_PROJECTION_CACHE_RELPATH);
+}
 
 export const SUPPORTED_PROJECTION_SCHEMA_VERSIONS: readonly number[] = [1];
 
