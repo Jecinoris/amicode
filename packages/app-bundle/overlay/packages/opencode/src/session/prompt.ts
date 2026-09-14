@@ -1440,11 +1440,14 @@ const layer = Layer.effect(
               system,
               messages: [
                 ...modelMsgs,
-                ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
+                // Use a user message (not assistant prefill) so providers that
+                // reject trailing assistant messages (e.g. Bedrock Converse)
+                // still receive the max-steps instruction.
+                ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : []),
               ],
               tools,
               model,
-              toolChoice: format.type === "json_schema" ? "required" : undefined,
+              toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,
             })
 
             if (structured !== undefined) {
