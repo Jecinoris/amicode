@@ -380,6 +380,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         addExisting: () => addExistingProject(),
         newEnvironment: () => vscode.commands.executeCommand("amicode.newEnvironment"),
         addExistingEnvironment: () => addExistingEnvironment(),
+        newDevFolder: () => createNewDevFolder(),
         getRoots: () => {
           const roots = this.treeService.getRoots();
           // Schedule a git-status push so colors survive the DOM wipe
@@ -786,43 +787,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .btn-chat.muted .btn-icon path {
       stroke: #999;
     }
-    .btn-new-project {
-      background: transparent;
-      color: var(--vscode-foreground);
-      border: 1px solid #2B382B;
-      font-weight: 400;
-    }
-    .btn-new-project:hover {
-      background: rgba(43, 56, 43, 0.15);
-    }
-    .btn-new-project:focus {
-      outline: none;
-    }
-    .btn-existing-project {
-      background: transparent;
-      color: var(--vscode-foreground);
-      border: 1px solid #2B382B;
-      font-weight: 400;
-    }
-    .btn-existing-project:hover {
-      background: rgba(43, 56, 43, 0.15);
-    }
-    .btn-existing-project:focus {
-      outline: none;
-    }
-    .btn-existing-project .btn-icon {
-      width: 12px;
-      height: 12px;
-      vertical-align: -1px;
-      margin-right: 3px;
-    }
-    .btn-row {
-      display: flex;
-      gap: 6px;
-    }
-    .btn-row button {
-      flex: 1;
-    }
     #tree-root {
       display: contents;
     }
@@ -1018,6 +982,44 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .tree-section-label .section-title {
       flex: 1;
     }
+    /* Per-section actions (New Project / Add Existing), right-justified on the label bar */
+    .tree-section-label .section-actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .tree-section-label .section-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 18px;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: inherit;
+      cursor: pointer;
+    }
+    .tree-section-label .section-action:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+      color: var(--vscode-foreground);
+    }
+    .tree-section-label .section-action:focus {
+      outline: none;
+    }
+    .tree-section-label .section-action:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline-offset: -1px;
+    }
+    .tree-section-label .section-action svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
     .fleet-placeholder-text {
       padding: 8px 12px 8px 32px;
       font-size: 12px;
@@ -1080,10 +1082,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 <body>
   <div class="sidebar-header">
     <button class="btn-chat" id="btn-chat"><svg class="btn-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><rect x="1" y="2" width="14" height="10" rx="3" fill="#fff676"/><polygon points="5,12 8,12 5,15" fill="#fff676"/><path d="M5 6.5h6M5 9h4" stroke="#111" stroke-width="1.2" stroke-linecap="round"/></svg>Chat with Amico</button>
-    <div class="btn-row">
-      <button class="btn-new-project" id="btn-new-project">+ New Project</button>
-      <button class="btn-existing-project" id="btn-existing-project"><svg class="btn-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><path d="M1.5 3.5A1 1 0 0 1 2.5 2.5h3.59a1 1 0 0 1 .7.29L8.5 4.5h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>Add Existing</button>
-    </div>
   </div>
   <div class="sidebar-sections">
     <div id="tree-root"></div>
@@ -1202,6 +1200,45 @@ export async function createNewProject(ctx: NewProjectContext, environmentSlug?:
     prompt += ` --environment "${environmentSlug}"`;
   }
   ctx.launchSession(prompt);
+}
+
+// ── New dev project folder (Development section) ──────────────────────────────
+
+/** Context dependencies for createNewDevFolder; mkdirSync is an override for testing. */
+export interface NewDevFolderContext {
+  mkdirSync?: (dir: string, opts?: { recursive?: boolean }) => void;
+}
+
+/**
+ * Development-section "New Project Folder": save-dialog (user types folder
+ * name) → mkdir → add to workspace. A plain folder and nothing else — no chat
+ * session, no server dependency. The research-project interview belongs to
+ * the Research section only.
+ * Exported for testing; the sidebar bridge's newDevFolder handler delegates here.
+ */
+export async function createNewDevFolder(ctx: NewDevFolderContext = {}): Promise<void> {
+  const uri = await vscode.window.showSaveDialog({
+    title: "Name your new project folder",
+    saveLabel: "Create",
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), "my-project")),
+  });
+  if (!uri) return;
+
+  const dir = uri.fsPath;
+  const mkdir = ctx.mkdirSync ?? ((d: string, o?: { recursive?: boolean }) => fs.mkdirSync(d, o));
+  try {
+    mkdir(dir, { recursive: true });
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Amicode: could not create project folder — ${(e as Error).message}`);
+    return;
+  }
+
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.some((f) => f.uri.fsPath === dir)) {
+    void vscode.window.showWarningMessage(`"${path.basename(dir)}" is already in the workspace.`);
+    return;
+  }
+  vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(dir) });
 }
 
 // ── New environment command (#892) ────────────────────────────────────────────

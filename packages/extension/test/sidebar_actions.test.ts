@@ -15,8 +15,9 @@ const bridgeSrc = readFileSync(
 
 describe("sidebar + dropdown removed — actions in context menus (#916)", () => {
   it("no section-add-dropdown (section + buttons removed)", () => {
-    // The per-section + button and its dropdown were removed — all actions
-    // live in the header bar and empty-area / env-group context menus.
+    // The per-section + button and its dropdown were removed — actions live
+    // as icon buttons on the section label bars and in the empty-area /
+    // env-group context menus.
     expect(webviewSrc).not.toContain("section-add-dropdown");
     expect(webviewSrc).not.toContain("section-add-btn");
   });
@@ -96,5 +97,101 @@ describe("sidebar bridge — handleSidebarMessage dispatches new-project with sl
     handlers.newProject.mockClear();
     handleSidebarMessage({ kind: "new-project" } as any, handlers);
     expect(handlers.newProject).toHaveBeenCalledWith(undefined);
+  });
+});
+
+// ── Section-label actions: New Project / Add Existing on Research + Development ──
+
+describe("section header actions (Research / Development label bars)", () => {
+  it("renderSectionHeader takes an actions list and renders a .section-actions group", () => {
+    expect(webviewSrc).toMatch(/function renderSectionHeader\([\s\S]*?actions: SectionAction\[\]/);
+    expect(webviewSrc).toContain('actionsEl.className = "section-actions"');
+    expect(webviewSrc).toContain('btn.className = "section-action"');
+  });
+
+  it("Research and Development each get their own actions; Fleet gets none", () => {
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Research", "research", researchSectionActions\(\)\)/);
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Development", "dev", devSectionActions\(\)\)/);
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet"\)/);
+  });
+
+  it("research actions post new-project and add-existing and are named for assistive tech", () => {
+    const start = webviewSrc.indexOf("function researchSectionActions");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("function devSectionActions"));
+    expect(block).toContain('label: "New Project"');
+    expect(block).toContain('kind: "new-project"');
+    expect(block).toContain('label: "Add Existing Project"');
+    expect(block).toContain('kind: "add-existing"');
+    expect(webviewSrc).toContain('btn.setAttribute("aria-label", action.label)');
+    expect(webviewSrc).toContain("btn.title = action.label");
+  });
+
+  it("the Development '+' never launches a chat: it opens the create menu or posts new-dev-folder", () => {
+    const start = webviewSrc.indexOf("function devSectionActions");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("type CreateMenuItem"));
+    expect(block).toContain('label: "New File or Folder"');
+    expect(block).toContain("openDevCreateMenu(anchor)");
+    expect(block).toContain('kind: "new-dev-folder"');
+    expect(block).toContain('kind: "add-existing"');
+    expect(block).not.toContain('kind: "new-project"');
+  });
+
+  it("the Development create menu offers New File / New Folder into the dev root and New Project Folder", () => {
+    const start = webviewSrc.indexOf("function devCreateMenuItems");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("function appendMenuItems"));
+    expect(block).toContain('label: "New File"');
+    expect(block).toContain('label: "New Folder"');
+    expect(block).toContain('startInlineEditInRoot("new-file", target)');
+    expect(block).toContain('startInlineEditInRoot("new-folder", target)');
+    expect(block).toContain('label: "New Project Folder…"');
+    expect(block).toContain('kind: "new-dev-folder"');
+    expect(block).not.toContain('kind: "new-project"');
+  });
+
+  it("New File / New Folder target the active dev root, else the first dev root", () => {
+    const start = webviewSrc.indexOf("function devTargetRoot");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("function startInlineEditInRoot"));
+    expect(block).toContain('r.projectType === "dev"');
+    expect(block).toContain("pendingActiveProject?.path");
+    expect(block).toContain("?? devRoots[0]");
+  });
+
+  it("the Development empty-area context menu uses the same create items, not the research New Project chat", () => {
+    const start = webviewSrc.indexOf("// Dev section: plain filesystem creation");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, start + 500);
+    expect(block).toContain("devCreateMenuItems()");
+    expect(block).toContain('label: "Add Existing Project"');
+    expect(block).not.toContain('kind: "new-project"');
+  });
+
+  it("bridge dispatches new-dev-folder to the newDevFolder handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const newDevFolder = vi.fn();
+    const newProject = vi.fn();
+    handleSidebarMessage({ kind: "new-dev-folder" } as any, { newDevFolder, newProject } as any);
+    expect(newDevFolder).toHaveBeenCalledTimes(1);
+    expect(newProject).not.toHaveBeenCalled();
+  });
+
+  it("bridge tolerates a missing newDevFolder handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    expect(() => handleSidebarMessage({ kind: "new-dev-folder" } as any, {} as any)).not.toThrow();
+  });
+
+  it("an action click neither toggles the section nor starts a section drag", () => {
+    // Both the header click (collapse toggle) and the drag mousedown bail
+    // when the event originates inside .section-actions.
+    const guards = webviewSrc.match(/closest\("\.section-actions"\)\) return;/g) ?? [];
+    expect(guards.length).toBe(2);
+  });
+
+  it("the header bar no longer wires the old project buttons", () => {
+    expect(webviewSrc).not.toContain("btn-new-project");
+    expect(webviewSrc).not.toContain("btn-existing-project");
   });
 });

@@ -65,10 +65,10 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain("font-src");
     // Script tag loads the bundled entry point
     expect(html).toContain("sidebar_webview.js");
-    // Both header buttons present
+    // Chat is the only header button — project actions live on the section labels
     expect(html).toContain("Chat with Amico");
-    expect(html).toContain("+ New Project");
-    expect(html).toContain("Add Existing");
+    expect(html).not.toContain('id="btn-new-project"');
+    expect(html).not.toContain('id="btn-existing-project"');
   });
 
   it("embeds icon theme data as window.__iconTheme in a nonce-guarded script", () => {
@@ -131,7 +131,7 @@ describe("SidebarViewProvider", () => {
     expect(view.title).toBe("");
   });
 
-  it("chat button: gray icon+text on solid yellow, yellow icon on muted, not bold; new-project: forest green outline, not bold", () => {
+  it("chat button: gray icon+text on solid yellow, yellow icon on muted, not bold; header has no project button row", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
@@ -155,30 +155,21 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain(".btn-chat.muted .btn-icon rect");
     expect(html).toContain("fill: #fff676");
 
-    // ── Project button row ──
-    // Both project buttons sit in a flex row that splits 50/50
-    expect(html).toContain('class="btn-row"');
-    expect(html).toMatch(/\.btn-row\s*\{[^}]*display:\s*flex/);
-    expect(html).toMatch(/\.btn-row\s*\{[^}]*gap:\s*6px/);
-    // Both buttons exist inside the row
-    expect(html).toContain('id="btn-new-project"');
-    expect(html).toContain('id="btn-existing-project"');
-    // Buttons use flex: 1 to share width equally
-    expect(html).toMatch(/\.btn-row\s+button\s*\{[^}]*flex:\s*1/);
+    // ── Header button row removed ──
+    // New Project / Add Existing moved onto the Research and Development
+    // section labels as icon buttons; the header keeps only Chat.
+    expect(html).not.toContain('class="btn-row"');
+    expect(html).not.toMatch(/\.btn-row\s*\{/);
+    expect(html).not.toMatch(/\.btn-new-project\s*\{/);
+    expect(html).not.toMatch(/\.btn-existing-project\s*\{/);
 
-    // ── New Project button ──
-    // Forest green outline (#2B382B), not bold
-    expect(html).toMatch(/\.btn-new-project\s*\{[^}]*border:\s*1px solid #2B382B/);
-    expect(html).toMatch(/\.btn-new-project\s*\{[^}]*font-weight:\s*400/);
-    expect(html).toMatch(/\.btn-new-project:focus\s*\{[^}]*outline:\s*none/);
-    // No yellow border on new-project
-    expect(html).not.toMatch(/\.btn-new-project\s*\{[^}]*#fff676/);
-
-    // ── Existing Project button ──
-    // Folder icon SVG + label, same outline styling as new-project
-    expect(html).toContain("Add Existing");
-    expect(html).toMatch(/btn-existing-project[^>]*>.*<svg/s);
-    expect(html).toMatch(/\.btn-existing-project\s*\{[^}]*border:\s*1px solid #2B382B/);
+    // ── Section action icons ──
+    // Right-justified on the label bar, transparent until hovered, pointer cursor
+    expect(html).toMatch(/\.tree-section-label \.section-actions\s*\{[^}]*margin-left:\s*auto/);
+    expect(html).toMatch(/\.tree-section-label \.section-action\s*\{[^}]*background:\s*transparent/);
+    expect(html).toMatch(/\.tree-section-label \.section-action\s*\{[^}]*cursor:\s*pointer/);
+    expect(html).toMatch(/\.tree-section-label \.section-action:hover\s*\{/);
+    expect(html).toMatch(/\.tree-section-label \.section-action:focus-visible\s*\{[^}]*outline:\s*1px solid/);
   });
 });
 
@@ -992,10 +983,12 @@ describe("sidebar webview — context menu bugfixes v2 (#895)", () => {
     expect(src).toMatch(/Add Existing Project/);
   });
 
-  it("section headers have no + button (actions live in header bar and context menus)", () => {
-    // Section + buttons removed — duplicated by the header "+ New Project"
-    // dropdown and the empty-area / env-group context menus.
+  it("section headers carry section-action icons, not the old section-add-btn dropdown", () => {
+    // The per-section + dropdown is gone; New Project / Add Existing are
+    // plain icon buttons in a .section-actions group on the label bar.
     expect(src).not.toContain("section-add-btn");
+    expect(src).toContain('"section-actions"');
+    expect(src).toContain('"section-action"');
   });
 });
 
@@ -1587,19 +1580,22 @@ describe("sidebar webview — section labels", () => {
     SidebarViewProvider = viewMod.SidebarViewProvider;
   });
 
-  it("dev section label reads 'Development Projects' not 'Development'", () => {
-    // The label is rendered in sidebar_webview.ts — verify tree service getRoots
-    // classifies dev roots, then the webview renders the correct label text.
-    // Since sidebar_webview is browser-only (no DOM in test), we verify the
-    // source contains the correct string literal.
+  it("section labels read 'Research' and 'Development' (not '… Projects')", () => {
+    // The labels are rendered in sidebar_webview.ts. Since sidebar_webview is
+    // browser-only (no DOM in test), we verify the source string literals.
+    // Project management moved onto the label bar as icons, so the word
+    // "Projects" no longer needs to be in the name.
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    expect(src).toContain('"Development Projects"');
+    expect(src).toMatch(/renderSectionHeader\("Research", "research"/);
+    expect(src).toMatch(/renderSectionHeader\("Development", "dev"/);
+    expect(src).not.toContain('"Research Projects"');
+    expect(src).not.toContain('"Development Projects"');
   });
 
-  it("sections are collapsible with chevrons (no + button — actions in header/context menus)", () => {
+  it("sections are collapsible with chevrons (no + dropdown — actions are label-bar icons and context menus)", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
@@ -1762,33 +1758,34 @@ describe("sidebar — add existing project", () => {
     handleSidebarMessage = bridgeMod.handleSidebarMessage;
   });
 
-  it("no section + button — add-existing available via context menus and header", () => {
+  it("no section + dropdown — add-existing available via context menus and section-label icons", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // add-existing still exists (context menus, header bar) but not via section button
+    // add-existing still exists (context menus, section-label action icon) but not via a dropdown
     expect(src).toContain('kind: "add-existing"');
     expect(src).not.toContain("section-add-btn");
   });
 
-  it("header contains an existing-project button", () => {
+  it("header bar no longer contains an existing-project button", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
 
     const html = view.webview.html;
-    expect(html).toContain("btn-existing-project");
+    expect(html).not.toContain("btn-existing-project");
+    expect(html).toContain("section-action");
   });
 
-  it("webview wires btn-existing-project click to post add-existing", () => {
+  it("webview wires the Add Existing Project section action to post add-existing", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    expect(src).toContain("btn-existing-project");
-    expect(src).toMatch(/btn-existing-project[\s\S]*add-existing/);
+    expect(src).not.toContain("btn-existing-project");
+    expect(src).toMatch(/label: "Add Existing Project",[\s\S]{0,200}kind: "add-existing"/);
   });
 
   it("bridge handles add-existing message", () => {
@@ -3178,6 +3175,71 @@ describe("createNewProject — command flow", () => {
     await createNewProject({ isServerReady: () => true, launchSession: vi.fn(), mkdirSync: vi.fn() });
 
     expect(inputBox).not.toHaveBeenCalled();
+  });
+});
+
+// ── New dev project folder (Development section "+", no chat) ─────────────────
+
+describe("createNewDevFolder — Development New Project Folder (no chat)", () => {
+  let createNewDevFolder: any;
+  let vs: typeof vscode;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vs = await import("vscode") as typeof vscode;
+    const mod = await import("../src/sidebar_view");
+    createNewDevFolder = mod.createNewDevFolder;
+  });
+
+  it("cancelling the dialog is a silent no-op", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(undefined);
+    const mkdir = vi.fn();
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+
+    await createNewDevFolder({ mkdirSync: mkdir });
+
+    expect(mkdir).not.toHaveBeenCalled();
+    expect(updateFolders).not.toHaveBeenCalled();
+  });
+
+  it("creates the folder and adds it to the workspace with no chat command and no server warning", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/home/user/my-lib") as any);
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    const warn = vi.spyOn(vs.window, "showWarningMessage");
+    const mkdir = vi.fn();
+    const executedBefore = (vs.commands as any).executed.length;
+
+    await createNewDevFolder({ mkdirSync: mkdir });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user/my-lib", expect.objectContaining({ recursive: true }));
+    expect(updateFolders).toHaveBeenCalledWith(
+      expect.any(Number), 0,
+      expect.objectContaining({ uri: expect.objectContaining({ fsPath: "/home/user/my-lib" }) }),
+    );
+    // Unlike createNewProject: no session launch, no server-readiness gate
+    expect((vs.commands as any).executed.length).toBe(executedBefore);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips when the folder is already in the workspace", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/existing/lib") as any);
+    (vs.workspace as any).workspaceFolders = [
+      { uri: vs.Uri.file("/existing/lib"), name: "lib", index: 0 },
+    ];
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    const warn = vi.spyOn(vs.window, "showWarningMessage");
+
+    await createNewDevFolder({ mkdirSync: vi.fn() });
+
+    expect(updateFolders).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("already"));
+
+    (vs.workspace as any).workspaceFolders = [];
+  });
+
+  it("the sidebar bridge handlers route newDevFolder to createNewDevFolder", () => {
+    const viewSrc = readFileSync(resolve(__dirname, "..", "src", "sidebar_view.ts"), "utf8");
+    expect(viewSrc).toContain("newDevFolder: () => createNewDevFolder()");
   });
 });
 
