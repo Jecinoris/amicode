@@ -26,15 +26,9 @@ function writeLock(root: string): void {
     join(root, "packages", "extension", "opencode.lock.json"),
     JSON.stringify({
       version: "1.18.29",
-      source: "release",
-      ref: "ab".repeat(20),
-      repo: "harmoniqs/opencode",
-      tag: "v1.18.29-amicode.30",
-      platforms: {
-        "darwin-arm64": { asset: "opencode-darwin-arm64.zip", sha256: "aa".repeat(32) },
-        "linux-arm64": { asset: "opencode-linux-arm64.tar.gz", sha256: "bb".repeat(32) },
-        "linux-x64": { asset: "opencode-linux-x64.tar.gz", sha256: "cc".repeat(32) },
-      },
+      base_version: "1.18.29",
+      base_commit: "7fe993879f98aa17cecc70f70d3f40d6f0f11689",
+      overlay_hash: "aa".repeat(32),
     }),
   );
 }

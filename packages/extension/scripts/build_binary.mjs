@@ -64,7 +64,7 @@ const run = (cmd, cmdArgs, cwd, note) => {
   if (r.status !== 0) fail(`${note} failed (exit ${r.status})`, 2);
 };
 
-// ── platform key (matches fetch_opencode.mjs / opencode.lock.json keys) ─────
+// ── platform key (matches fetch_opencode.mjs KNOWN_PLATFORMS) ───────────────
 // --platform <key> enables cross-compilation (e.g. --platform linux-arm64 on
 // a linux-x64 host).  Without it, the host platform is used + --single flag.
 const requestedPlatform = flag("platform");

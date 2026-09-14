@@ -1,17 +1,10 @@
 /**
- * Main Source Resolver — #1018
+ * Main Source Resolver — #1018, updated for post-absorption (#1098)
  *
- * Resolves the fork binary for "Rebuild from Main" by reading the promoted
- * manifest (opencode.lock.json on main) and downloading the pinned release
- * asset. Replaces the fork-build path (bun install → bun run build) with
- * the release-download path (fetchFromRelease).
- *
- * Design constraints:
- * - No fork clone, no bun invocation in the Main path
- * - sha256 mismatch is a hard refusal
- * - git pull uses --ff-only (not --rebase)
- * - Pending-promotion info is display-only
- * - Unsupported platforms detected before any mutation
+ * Resolves the binary for "Rebuild from Main" by reading the lock file
+ * (opencode.lock.json on main) and downloading from the upstream release.
+ * Post-absorption: no fork repo, no fork tag, no per-platform hashes in
+ * the lock — binaries are built from the committed overlay.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -22,11 +15,9 @@ import { unsupportedHostAdvice, SUPPORTED } from "../opencode_binary";
 
 export interface LockFile {
   version: string;
-  source: string;
-  ref: string;
-  repo: string;
-  tag: string;
-  platforms: Record<string, { asset: string; sha256: string }>;
+  base_version: string;
+  base_commit: string;
+  overlay_hash: string;
 }
 
 export interface ExecResult {
@@ -55,8 +46,7 @@ export class LockFileError extends Error {
 
 /**
  * Read and validate opencode.lock.json from the amicode repo root.
- * Validates the fields required by Rebuild from Main: tag, ref, repo,
- * and at least one platform entry.
+ * Post-absorption schema: version, base_version, base_commit, overlay_hash.
  */
 export function readLockFile(amicodePath: string): LockFile {
   const lockPath = join(amicodePath, "packages", "extension", "opencode.lock.json");
@@ -81,35 +71,16 @@ export function readLockFile(amicodePath: string): LockFile {
   if (typeof m.version !== "string" || m.version === "") {
     throw new LockFileError("opencode.lock.json: version must be a non-empty string");
   }
-  if (!m.tag || typeof m.tag !== "string") {
+
+  if (typeof m.base_commit !== "string" || !/^[0-9a-f]{40}$/.test(m.base_commit)) {
     throw new LockFileError(
-      "opencode.lock.json: tag is required for Rebuild from Main " +
-      "(it identifies the GitHub Release to download)",
+      "opencode.lock.json: base_commit must be a 40-character hex SHA " +
+      "(it identifies the stock canonical upstream commit)",
     );
   }
-  if (!m.ref || typeof m.ref !== "string" || !/^[0-9a-f]{40}$/.test(m.ref)) {
-    throw new LockFileError(
-      "opencode.lock.json: ref must be a 40-character hex SHA " +
-      "(it identifies the promoted fork commit)",
-    );
-  }
-  if (!m.repo || typeof m.repo !== "string") {
-    throw new LockFileError("opencode.lock.json: repo is required (e.g. 'harmoniqs/opencode')");
-  }
 
-  const platforms = (m.platforms ?? {}) as Record<string, unknown>;
-  if (Object.keys(platforms).length === 0) {
-    throw new LockFileError("opencode.lock.json: no platform entries found");
-  }
-
-  for (const [key, p] of Object.entries(platforms)) {
-    const plat = p as Record<string, unknown>;
-    if (typeof plat.asset !== "string" || plat.asset === "") {
-      throw new LockFileError(`opencode.lock.json: ${key}.asset missing`);
-    }
-    if (!/^[0-9a-f]{64}$/.test((plat.sha256 as string) ?? "")) {
-      throw new LockFileError(`opencode.lock.json: ${key}.sha256 must be 64 hex chars`);
-    }
+  if (typeof m.overlay_hash !== "string" || m.overlay_hash === "") {
+    throw new LockFileError("opencode.lock.json: overlay_hash is required");
   }
 
   return m as unknown as LockFile;
@@ -118,28 +89,18 @@ export function readLockFile(amicodePath: string): LockFile {
 // ── resolveMainPlatform ──
 
 /**
- * Resolve the current platform key and verify it exists in the lock file.
- * Detects unsupported platforms (darwin-x64, win32) before any download.
+ * Resolve the current platform key. Post-absorption: no per-platform entries
+ * in the lock — just check against the SUPPORTED constant.
  */
 export function resolveMainPlatform(
-  lock: LockFile,
+  _lock: LockFile,
   platform: string = process.platform,
   arch: string = process.arch,
 ): string {
   const key = `${platform}-${arch}`;
 
-  // Check against the SUPPORTED constant first for unsupported-host advice
   if (!(SUPPORTED as readonly string[]).includes(key)) {
     throw new UnsupportedPlatformError(unsupportedHostAdvice(platform, arch));
-  }
-
-  // Then check the lock file has this platform
-  if (!(key in lock.platforms)) {
-    throw new UnsupportedPlatformError(
-      `Platform ${key} is supported but not in the lock file ` +
-      `(found: ${Object.keys(lock.platforms).join(", ")}). ` +
-      `Update opencode.lock.json or run opencode:pin.`,
-    );
   }
 
   return key;
@@ -147,10 +108,6 @@ export function resolveMainPlatform(
 
 // ── checkDirtyTree ──
 
-/**
- * Check if the working tree has uncommitted changes.
- * Returns { dirty: false } for clean, { dirty: true, message } for dirty.
- */
 export async function checkDirtyTree(
   repoPath: string,
   exec: ExecFn,
@@ -171,10 +128,6 @@ export async function checkDirtyTree(
 
 // ── pullMainBranch ──
 
-/**
- * Pull the main branch with --ff-only (not --rebase).
- * Runs: git fetch origin → git checkout main → git pull --ff-only origin main
- */
 export async function pullMainBranch(
   amicodePath: string,
   exec: ExecFn,
@@ -197,39 +150,7 @@ export async function pullMainBranch(
   return { ok: true };
 }
 
-// ── checkPendingPromotion ──
-
-/**
- * Check if the fork's local/amicode branch is ahead of the lock file's ref.
- * This is informational only — a failure is non-blocking and silently skipped.
- */
-export async function checkPendingPromotion(
-  forkRepo: string,
-  lockRef: string,
-  exec: ExecFn,
-): Promise<{ pending: boolean; remoteHead?: string; unreachable?: boolean }> {
-  // Use git ls-remote to check the fork's local/amicode HEAD without a clone.
-  // Output format: "<sha>\trefs/heads/local/amicode"
-  const result = await exec(
-    `git ls-remote https://github.com/${forkRepo}.git refs/heads/local/amicode`,
-  );
-
-  if (!result.ok) {
-    return { pending: false, unreachable: true };
-  }
-
-  const remoteHead = (result.stdout ?? "").trim().split(/\s+/)[0];
-  if (!remoteHead || !/^[0-9a-f]{40}$/.test(remoteHead)) {
-    return { pending: false, unreachable: true };
-  }
-
-  return {
-    pending: remoteHead !== lockRef,
-    remoteHead,
-  };
-}
-
-// ── downloadForkBinary ──
+// ── downloadBinary ──
 
 export interface DownloadOpts {
   amicodePath: string;
@@ -239,15 +160,13 @@ export interface DownloadOpts {
 }
 
 /**
- * Download the fork binary using the existing fetchFromRelease infrastructure.
- * Reads opencode.lock.json, resolves the platform, downloads and verifies.
+ * Download the binary using the existing fetchFromRelease infrastructure.
  */
 export async function downloadForkBinary(opts: DownloadOpts): Promise<{
   path: string;
   source: string;
   skipped: boolean;
 }> {
-  // Dynamic import of the ESM fetch_opencode module
   const { fetchOpencode } = await import("../../scripts/fetch_opencode.mjs");
 
   try {
@@ -256,16 +175,14 @@ export async function downloadForkBinary(opts: DownloadOpts): Promise<{
       platform: opts.platform,
       download: opts.download,
       ghApi: opts.ghApi,
-      mode: "release", // Always release for Main rebuild — never local
     });
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Wrap deleted-release errors with actionable guidance
     if (msg.includes("404") || msg.includes("not found") || msg.includes("Not Found")) {
       const lock = readLockFile(opts.amicodePath);
       throw new Error(
-        `The release \`${lock.tag}\` is no longer available. ` +
+        `The release \`v${lock.version}\` is no longer available. ` +
         `This may be a repository issue — contact your team.`,
       );
     }
@@ -289,18 +206,8 @@ export interface RebuildResult {
   ok: boolean;
   error?: string;
   binaryPath?: string;
-  pendingPromotion?: { pending: boolean; remoteHead?: string };
 }
 
-/**
- * Orchestrate the full Rebuild from Main flow:
- * 1. Check dirty tree
- * 2. Detect unsupported platform
- * 3. Pull main (--ff-only)
- * 4. Read lock file
- * 5. Download fork binary (fetchFromRelease)
- * 6. Check pending promotion (informational)
- */
 export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<RebuildResult> {
   const exec: ExecFn = opts.exec ?? defaultExec;
   const onPhase = opts.onPhase ?? (() => {});
@@ -312,15 +219,12 @@ export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<Rebuil
     return { ok: false, error: dirty.message };
   }
 
-  // ── Step 2: Detect unsupported platform (before any mutation) ──
-  // Read lock first to check platform — but we need to handle the case where
-  // the lock file doesn't exist yet (pre-pull). Try reading it; if missing,
-  // proceed to pull first.
+  // ── Step 2: Detect unsupported platform ──
   let lock: LockFile | undefined;
   try {
     lock = readLockFile(opts.amicodePath);
   } catch {
-    // Lock file may not exist before pull — that's OK, we'll read it after
+    // Lock file may not exist before pull
   }
 
   if (lock) {
@@ -341,7 +245,7 @@ export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<Rebuil
     return { ok: false, error: pull.error };
   }
 
-  // ── Step 4: Read lock file (after pull, in case it was updated) ──
+  // ── Step 4: Read lock file (after pull) ──
   onPhase("reading", "Reading lock file...");
   try {
     lock = readLockFile(opts.amicodePath);
@@ -352,7 +256,6 @@ export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<Rebuil
     };
   }
 
-  // Re-check platform after pull (lock may have changed)
   let platformKey: string;
   try {
     platformKey = resolveMainPlatform(lock, opts.platformOverride, opts.archOverride);
@@ -363,7 +266,7 @@ export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<Rebuil
     throw e;
   }
 
-  // ── Step 5: Download fork binary ──
+  // ── Step 5: Download binary ──
   onPhase("downloading", `Downloading binary for ${platformKey}...`);
   let binaryResult: { path: string; source: string; skipped: boolean };
   try {
@@ -380,19 +283,9 @@ export async function rebuildFromMain(opts: RebuildFromMainOpts): Promise<Rebuil
     };
   }
 
-  // ── Step 6: Check pending promotion (informational, non-blocking) ──
-  onPhase("checking-promotion", "Checking for pending promotion...");
-  let pendingPromotion: { pending: boolean; remoteHead?: string } | undefined;
-  try {
-    pendingPromotion = await checkPendingPromotion(lock.repo, lock.ref, exec);
-  } catch {
-    // Non-blocking — silently skip
-  }
-
   return {
     ok: true,
     binaryPath: binaryResult.path,
-    pendingPromotion,
   };
 }
 

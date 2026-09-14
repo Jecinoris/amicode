@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   classifyError,
   LOCK_FILE_MISSING,
-  LOCK_MISSING_TAG,
+  LOCK_MISSING_BASE_COMMIT,
   GIT_DIRTY_TREE,
   GIT_NON_FF,
   DOWNLOAD_HASH_MISMATCH,
@@ -18,7 +18,7 @@ describe("rebuild error catalog (#1016)", () => {
   it("every error has a code, message, and non-empty fix array", () => {
     const samples: RebuildError[] = [
       LOCK_FILE_MISSING("/tmp/missing"),
-      LOCK_MISSING_TAG,
+      LOCK_MISSING_BASE_COMMIT,
       GIT_DIRTY_TREE,
       GIT_NON_FF,
       DOWNLOAD_HASH_MISMATCH("test.tar.gz"),

@@ -394,7 +394,7 @@ async function main() {
     JSON.stringify(
       {
         recordedAt: new Date().toISOString(),
-        fork: { version, tag: manifest.tag },
+        fork: { version },
         // The recording sandbox dir (and its realpath — responses embed both
         // forms: unresolved joins and realpathSync'd results). The replay
         // normalizes these to <SANDBOX> on both sides before comparing.
