@@ -1,29 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 const workflow = (name: string) => readFileSync(path.join(root, ".github", "workflows", name), "utf8");
+const workflowExists = (name: string) => existsSync(path.join(root, ".github", "workflows", name));
 
 describe("release workflow payload integrity", () => {
-  it("keeps fork provisioning in candidate preparation and promotes from the tagged payload", () => {
-    const candidate = workflow("prepare-release-candidate.yml");
+  it("builds from overlay (no fork download) and promotes from the tagged payload", () => {
     const release = workflow("release.yml");
     const promote = workflow("promote.yml");
+    const ci = workflow("ci.yml");
 
-    expect(candidate).toContain("REPO_ACCESS_TOKEN");
-    expect(candidate).toContain("Preflight fork credential");
-    expect(candidate).toContain("OPENCODE_CHANNEL=beta");
-    expect(candidate).toContain('"client_payload[ref]=$SHA"');
-    expect(candidate).not.toContain('"repos/$FORK_REPO/git/refs"');
+    // Fork-centric workflows are retired (#1096)
+    expect(workflowExists("prepare-release-candidate.yml")).toBe(false);
+    expect(workflowExists("overlay-promotion-bot.yml")).toBe(false);
 
+    // release.yml builds from overlay, not fork
+    expect(release).toContain("build_binary.mjs");
+    expect(release).not.toContain("OPENCODE_FETCH_TOKEN");
     expect(release).not.toContain("REPO_ACCESS_TOKEN");
-    expect(release).not.toContain("AMICODE_RELEASE_TAG");
-    expect(release).not.toContain("actions/upload-artifact");
-    expect(release).not.toContain("publish-marketplace:");
+    expect(release).not.toContain("fetch_opencode.mjs");
     expect(release).toContain("Publish to VS Code Marketplace");
+    expect(release).toContain("build-binary");
 
+    // ci.yml has a build-binary job, no fetch:opencode calls
+    expect(ci).toContain("build-binary:");
+    expect(ci).not.toContain("fetch:opencode");
+    expect(ci).not.toContain("OPENCODE_FETCH_TOKEN");
+    expect(ci).toContain("download-artifact");
+
+    // promote.yml dispatches release.yml correctly
     expect(promote).toContain('gh workflow run release.yml --ref "$CLEAN" -f tag="$CLEAN"');
   });
 });

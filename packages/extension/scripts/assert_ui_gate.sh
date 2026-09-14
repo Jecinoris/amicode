@@ -63,6 +63,29 @@ else
   echo "OK: foreign-arch binary ($BIN_PLATFORM on $RUNNER_PLATFORM) — version re-assert skipped (the sha256 download gate holds the pin); the carrier grep below still applies"
 fi
 
+# ── channel assertion via .buildinfo sidecar (#1096) ─────────────────────────
+# build:binary writes a .buildinfo key=value file alongside the binary;
+# reading it is simple, deterministic, and does not grep minified code.
+# Fallback: if .buildinfo is absent (pre-S4 binary, or fetch:opencode path),
+# skip the sidecar check — the version + auth_token checks still hold.
+BUILDINFO="$(dirname "$BIN")/.buildinfo"
+if [ -f "$BUILDINFO" ]; then
+  CHANNEL="$(grep '^OPENCODE_CHANNEL=' "$BUILDINFO" | cut -d= -f2)"
+  if [ "$CHANNEL" != "dev" ]; then
+    echo "FAIL: .buildinfo declares OPENCODE_CHANNEL=$CHANNEL (expected dev) — amicode UI surfaces are hidden"
+    exit 1
+  fi
+  echo "OK: .buildinfo confirms OPENCODE_CHANNEL=dev"
+  # Also verify .buildinfo version matches the lock
+  BI_VERSION="$(grep '^OPENCODE_VERSION=' "$BUILDINFO" | cut -d= -f2)"
+  if [ -n "$BI_VERSION" ] && [ "$BI_VERSION" != "$WANT_VERSION" ]; then
+    echo "FAIL: .buildinfo declares OPENCODE_VERSION=$BI_VERSION but lock pins $WANT_VERSION"
+    exit 1
+  fi
+else
+  echo "INFO: no .buildinfo sidecar at $BUILDINFO — pre-S4 binary, skipping channel sidecar check"
+fi
+
 # The #823 bootstrap seam's engine side: the ?auth_token= carrier the framed
 # path authenticates credential-less GETs with (fork AND stock middleware
 # both name AUTH_TOKEN_QUERY = "auth_token"). `if`, not a bare grep: under
