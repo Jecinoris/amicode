@@ -1259,6 +1259,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           },
         );
       }
+      // #1192: the amicode service (the branded app shelf on configuredPort+1)
+      // runs INSIDE the extension host — it dies with every window reload and
+      // must be re-created every activation, regardless of whether the engine
+      // was adopted or cold-spawned. Without this, frameUrl() returns the raw
+      // engine origin (stock opencode) because amicodeService is undefined.
+      const adoptedServiceBoot = await startAmicodeService(opencodeChannel, {
+        engine: {
+          password: serverPassword,
+          getUrl: () => opencodeReadyUrl?.toString(),
+        },
+        modelRouting: {
+          agentsDir: path.join(ctx.extensionPath, "agents"),
+          getProviders: async () => {
+            const engineUrl = opencodeReadyUrl?.toString();
+            if (!engineUrl) return undefined;
+            return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
+          },
+        },
+        appDistRoot: resolveAppDistRoot(
+          vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
+          ctx.extensionPath,
+        ),
+        fleetActivation: () =>
+          resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+        port: configuredPort > 0 ? configuredPort + 1 : undefined,
+      });
+      amicodeService = adoptedServiceBoot ?? undefined;
+      ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));
+      // #1188: re-frame any panel that came up on the engine fallback before
+      // the service was ready, and hook app-ready for stragglers.
+      ChatPanel.reframeAll(amicodeService?.url);
+      ChatPanel.onAppReadyPersistent(() => ChatPanel.reframeAll(amicodeService?.url));
+      opencodeChannel.appendLine(
+        `[boot] amicode service started on adopted path${amicodeService?.url ? ` (${amicodeService.url})` : ""}`,
+      );
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
