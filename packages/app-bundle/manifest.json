@@ -612,7 +612,7 @@
     "packages/app/src/components/session/vscode-explorer-file-icon.tsx": "b5ba0cafe61594dd2afe45ef6e070e512861162933c85e9545db2ec697d50f17",
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "fa5d143cc101f3a3b9d5ad445edddc981e0d02783021d52dbfed6c8d8bf62498",
     "packages/app/src/components/settings-v2/data-storage.tsx": "a56b423b32c952c4379688d88d13a9f43b163a4169b9393f8c35b18a763a1180",
-    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "ad7bd9bd13271e98a074f59a479efda1a7a874e04086e8eaa3c67422c27cbd3c",
+    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "33445822be653d644eb49e3c463fc69db8dbf761513fe13397baa2f8e969a4c6",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.test.ts": "4d11815fe5acfa930bc418d0be82602f03821997300d0deef0aa2da2a743b3b0",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.ts": "561a75fa456b832d4af6f782c7ecf5269ce768fc2adc59c15a79197a2dde84c0",
     "packages/app/src/components/settings-v2/developer-tools-request-state.test.ts": "29711b3bc17fddbb8d046e104bc78e775a9ec7c5aa0ee2e181fbcd8b2b5e2135",
