@@ -103,6 +103,8 @@ export type NewProjectMessage = { kind: "new-project"; environmentSlug?: string 
 export type AddExistingMessage = { kind: "add-existing" };
 export type NewEnvironmentMessage = { kind: "new-environment" };
 export type AddExistingEnvironmentMessage = { kind: "add-existing-environment" };
+/** Development section: create a plain project folder and add it to the workspace — no chat session. */
+export type NewDevFolderMessage = { kind: "new-dev-folder" };
 export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
@@ -129,6 +131,7 @@ export type SidebarUpMessage =
   | AddExistingMessage
   | NewEnvironmentMessage
   | AddExistingEnvironmentMessage
+  | NewDevFolderMessage
   | GetRootsMessage
   | GetChildrenMessage
   | OpenFileMessage
@@ -240,6 +243,8 @@ export interface SidebarMessageHandlers {
   addExisting: () => void;
   newEnvironment: () => void;
   addExistingEnvironment: () => void;
+  /** Development "New Project Folder": save dialog → mkdir → workspace. No chat session. */
+  newDevFolder?: () => void;
   getRoots: () => TreeRoot[];
   getChildren: (path: string) => Promise<TreeEntry[]>;
   openFile: (path: string) => void;
@@ -281,6 +286,9 @@ export function handleSidebarMessage(
       break;
     case "add-existing-environment":
       handlers.addExistingEnvironment();
+      break;
+    case "new-dev-folder":
+      handlers.newDevFolder?.();
       break;
     case "get-roots": {
       const roots = handlers.getRoots();

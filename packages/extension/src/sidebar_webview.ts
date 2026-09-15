@@ -170,20 +170,10 @@ function createIconEl(icon: string): HTMLElement {
   // ── Button wiring ──────────────────────────────────────────────────────────
 
   const chatBtn = document.getElementById("btn-chat");
-  const newProjectBtn = document.getElementById("btn-new-project");
-  const existingProjectBtn = document.getElementById("btn-existing-project");
   const treeRoot = document.getElementById("tree-root");
 
   chatBtn?.addEventListener("click", () => {
     vscode.postMessage({ kind: "open-chat" });
-  });
-
-  newProjectBtn?.addEventListener("click", () => {
-    vscode.postMessage({ kind: "new-project" });
-  });
-
-  existingProjectBtn?.addEventListener("click", () => {
-    vscode.postMessage({ kind: "add-existing" });
   });
 
   // ── Fleet section toggle ──────────────────────────────────────────────────
@@ -421,9 +411,9 @@ function createIconEl(icon: string): HTMLElement {
 
     const target = e.target as HTMLElement;
 
-    // Suppress default context menu on the sidebar header (Chat + New Project
-    // buttons) and section headers (RESEARCH PROJECTS / DEVELOPMENT PROJECTS
-    // label bars) — no custom menu needed, just prevent the browser default.
+    // Suppress default context menu on the sidebar header (Chat button) and
+    // section headers (RESEARCH / DEVELOPMENT label bars, including their
+    // action icons) — no custom menu needed, just prevent the browser default.
     if (target.closest(".sidebar-header") || target.closest(".tree-section-label")) {
       e.preventDefault();
       return;
@@ -548,24 +538,12 @@ function createIconEl(icon: string): HTMLElement {
               menu.appendChild(el);
             }
           } else {
-            // Dev section: 2-item menu
-            const newItem = document.createElement("div");
-            newItem.className = "context-menu-item";
-            newItem.textContent = "New Project";
-            newItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "new-project" });
-            });
-            menu.appendChild(newItem);
-
-            const addItem = document.createElement("div");
-            addItem.className = "context-menu-item";
-            addItem.textContent = "Add Existing Project";
-            addItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "add-existing" });
-            });
-            menu.appendChild(addItem);
+            // Dev section: plain filesystem creation (never a chat), then Add Existing
+            appendMenuItems(menu, [
+              ...devCreateMenuItems(),
+              { separator: true },
+              { label: "Add Existing Project", run: () => vscode.postMessage({ kind: "add-existing" }) },
+            ]);
           }
 
           document.body.appendChild(menu);
@@ -1093,7 +1071,179 @@ function createIconEl(icon: string): HTMLElement {
     }
   }
 
-  function renderSectionHeader(title: string, sectionKey: string): { section: HTMLElement; body: HTMLElement } {
+  // ── Section header actions ───────────────────────────────────────────────
+  // Research and Development each carry a "+" and an "Add Existing Project"
+  // icon button right-justified on their label bar. These replace the former
+  // header-bar button row so both sections are managed in place.
+  //
+  // The two "+" buttons differ on purpose: Research starts the research-project
+  // interview in a chat session; Development is plain filesystem creation
+  // (New File / New Folder inside the dev root, or a new project folder) and
+  // never opens a chat.
+
+  type SectionAction = {
+    label: string;
+    icon: HTMLElement;
+    onClick: (e: MouseEvent, anchor: HTMLElement) => void;
+  };
+
+  /** 16×16 inline SVG plus icon for the "New Project" section action. */
+  function createPlusIconEl(): HTMLElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", "M8 3v10M3 8h10");
+    p.setAttribute("stroke", "currentColor");
+    p.setAttribute("stroke-width", "1.4");
+    p.setAttribute("stroke-linecap", "round");
+    svg.appendChild(p);
+    return svg as unknown as HTMLElement;
+  }
+
+  /** 16×16 inline SVG folder icon for the "Add Existing Project" section action (line art, not the icon theme). */
+  function createSectionFolderIconEl(): HTMLElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", "M1.5 3.5A1 1 0 0 1 2.5 2.5h3.59a1 1 0 0 1 .7.29L8.5 4.5h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z");
+    p.setAttribute("stroke", "currentColor");
+    p.setAttribute("stroke-width", "1.2");
+    p.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(p);
+    return svg as unknown as HTMLElement;
+  }
+
+  /** Research: "+" launches the research-project interview; folder adds an existing project. */
+  function researchSectionActions(): SectionAction[] {
+    return [
+      {
+        label: "New Project",
+        icon: createPlusIconEl(),
+        onClick: () => vscode.postMessage({ kind: "new-project" }),
+      },
+      {
+        label: "Add Existing Project",
+        icon: createSectionFolderIconEl(),
+        onClick: () => vscode.postMessage({ kind: "add-existing" }),
+      },
+    ];
+  }
+
+  /** Development: "+" creates a file or folder (no chat); folder adds an existing project. */
+  function devSectionActions(): SectionAction[] {
+    return [
+      {
+        label: "New File or Folder",
+        icon: createPlusIconEl(),
+        onClick: (e, anchor) => {
+          // The document-level click listener dismisses menus; keep this
+          // click from reaching it so the menu we open survives.
+          e.stopPropagation();
+          if (devTargetRoot()) {
+            openDevCreateMenu(anchor);
+          } else {
+            // No dev root to create inside yet — go straight to a new project folder.
+            dismissMenu();
+            vscode.postMessage({ kind: "new-dev-folder" });
+          }
+        },
+      },
+      {
+        label: "Add Existing Project",
+        icon: createSectionFolderIconEl(),
+        onClick: () => vscode.postMessage({ kind: "add-existing" }),
+      },
+    ];
+  }
+
+  // ── Development create menu (shared by the "+" icon and the empty-area context menu)
+
+  type CreateMenuItem = { label: string; run: () => void } | { separator: true };
+
+  /** The dev root a section-level New File / New Folder lands in: the active
+   *  project when it is a dev root, else the first dev root, else null. */
+  function devTargetRoot(): TreeRoot | null {
+    const devRoots = currentRoots.filter((r) => r.projectType === "dev");
+    if (devRoots.length === 0) return null;
+    const activePath = pendingActiveProject?.path ?? null;
+    return devRoots.find((r) => r.path === activePath) ?? devRoots[0];
+  }
+
+  /** Open an inline New File / New Folder row at the top of a root's children. */
+  function startInlineEditInRoot(mode: "new-file" | "new-folder", root: TreeRoot): void {
+    if (!treeRoot) return;
+    const nodes = Array.from(treeRoot.querySelectorAll("[data-path][data-type='directory']"));
+    const el = nodes.find((n) => (n as HTMLElement).dataset.path === root.path) as HTMLElement | undefined;
+    if (!el) return;
+    startInlineEdit(mode, root.path, el);
+  }
+
+  /** New File / New Folder (inline, when a dev root exists) + New Project Folder (save dialog). */
+  function devCreateMenuItems(): CreateMenuItem[] {
+    const items: CreateMenuItem[] = [];
+    const target = devTargetRoot();
+    if (target) {
+      items.push({ label: "New File", run: () => startInlineEditInRoot("new-file", target) });
+      items.push({ label: "New Folder", run: () => startInlineEditInRoot("new-folder", target) });
+      items.push({ separator: true });
+    }
+    items.push({ label: "New Project Folder…", run: () => vscode.postMessage({ kind: "new-dev-folder" }) });
+    return items;
+  }
+
+  function appendMenuItems(menu: HTMLElement, items: CreateMenuItem[]): void {
+    for (const item of items) {
+      if ("separator" in item) {
+        const sep = document.createElement("div");
+        sep.className = "context-menu-separator";
+        menu.appendChild(sep);
+        continue;
+      }
+      const el = document.createElement("div");
+      el.className = "context-menu-item";
+      el.textContent = item.label;
+      el.addEventListener("click", () => {
+        dismissMenu();
+        item.run();
+      });
+      menu.appendChild(el);
+    }
+  }
+
+  /** Drop the dev create menu just below its "+" anchor, clamped to the viewport. */
+  function openDevCreateMenu(anchor: HTMLElement): void {
+    dismissMenu();
+    const menu = document.createElement("div");
+    menu.className = "context-menu";
+    const rect = anchor.getBoundingClientRect();
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 2}px`;
+    appendMenuItems(menu, devCreateMenuItems());
+    document.body.appendChild(menu);
+    activeMenu = menu;
+
+    const mrect = menu.getBoundingClientRect();
+    if (mrect.right > window.innerWidth) {
+      menu.style.left = `${window.innerWidth - mrect.width - 4}px`;
+    }
+    if (mrect.bottom > window.innerHeight) {
+      menu.style.top = `${window.innerHeight - mrect.height - 4}px`;
+    }
+  }
+
+  function renderSectionHeader(
+    title: string,
+    sectionKey: string,
+    actions: SectionAction[] = [],
+  ): { section: HTMLElement; body: HTMLElement } {
     const section = document.createElement("div");
     section.className = sectionExpanded[sectionKey] ? "section expanded" : "section";
     section.dataset.sectionKey = sectionKey;
@@ -1112,6 +1262,22 @@ function createIconEl(icon: string): HTMLElement {
     header.appendChild(chevron);
     header.appendChild(titleEl);
 
+    if (actions.length > 0) {
+      const actionsEl = document.createElement("div");
+      actionsEl.className = "section-actions";
+      for (const action of actions) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "section-action";
+        btn.title = action.label;
+        btn.setAttribute("aria-label", action.label);
+        btn.appendChild(action.icon);
+        btn.addEventListener("click", (e: MouseEvent) => action.onClick(e, btn));
+        actionsEl.appendChild(btn);
+      }
+      header.appendChild(actionsEl);
+    }
+
     const body = document.createElement("div");
     body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";
     body.style.display = sectionExpanded[sectionKey] ? "block" : "none";
@@ -1119,9 +1285,11 @@ function createIconEl(icon: string): HTMLElement {
     section.appendChild(header);
     section.appendChild(body);
 
-    header.addEventListener("click", () => {
+    header.addEventListener("click", (e: MouseEvent) => {
       // Only toggle if not coming from a drag
       if (dragState?.active) return;
+      // Clicks on the action icons act, they don't collapse the section
+      if ((e.target as HTMLElement).closest(".section-actions")) return;
       sectionExpanded[sectionKey] = !sectionExpanded[sectionKey];
       saveSectionState();
       chevron.classList.toggle("expanded", sectionExpanded[sectionKey]);
@@ -1154,7 +1322,7 @@ function createIconEl(icon: string): HTMLElement {
 
     for (const key of renderOrder) {
       if (key === "research") {
-        const { section, body } = renderSectionHeader("Research Projects", "research");
+        const { section, body } = renderSectionHeader("Research", "research", researchSectionActions());
         const hasContent = envGroups.length > 0 || unboundProjects.length > 0;
         if (hasContent) {
           // Environment groups first (already sorted alphabetically)
@@ -1173,7 +1341,7 @@ function createIconEl(icon: string): HTMLElement {
         }
         treeRoot.appendChild(section);
       } else if (key === "dev") {
-        const { section, body } = renderSectionHeader("Development Projects", "dev");
+        const { section, body } = renderSectionHeader("Development", "dev", devSectionActions());
         if (dev.length > 0) {
           for (const root of dev) {
             body.appendChild(renderRootNode(root, 0));
@@ -1233,6 +1401,8 @@ function createIconEl(icon: string): HTMLElement {
   function setupSectionDrag(headerEl: HTMLElement, sectionKey: string, sectionEl: HTMLElement): void {
     headerEl.addEventListener("mousedown", (e: MouseEvent) => {
       if (e.button !== 0) return; // left-click only
+      // Pressing an action icon must not begin a section drag
+      if ((e.target as HTMLElement).closest(".section-actions")) return;
       dragState = {
         sectionKey,
         sectionEl,
