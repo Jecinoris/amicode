@@ -95,6 +95,10 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
+import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
+import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -642,11 +646,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // logged. ONE value for the whole activation: respawns (solver switch, vault
   // refresh, restart) reuse it, because the open chat iframe carries the boot
   // credential and a mid-session rotation would strand it on 401s.
-  const serverPassword = mintServerPassword();
+  // #1145 (ADR 0020): adoption replaces this with the RECORDED password from
+  // the handshake — the surviving server was spawned with it, so it's the
+  // credential the SSE client + chat iframe must carry. The fresh mint is
+  // still the fallback for cold-spawn.
+  let serverPassword = mintServerPassword();
   // The extension's own calls to the server (health probe aside — ServerManager
   // derives its own from the spawn env) authenticate with the matching Basic
   // credential: SSE /event, the /config* signal probes, and the chat iframe
   // (via the app's ?auth_token= bootstrap).
+  // #1145: the object is mutated on adopt to carry the RECORDED password.
   const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
 
   /** #823 (the M3 cutover consumer flip): the origin every engine-origin UI
@@ -829,6 +838,122 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (configuredPort > 0) {
       opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
     }
+
+    // #1145 (ADR 0020): adopt-or-spawn decision — read the handshake and run
+    // the four-check gate BEFORE creating a ServerManager. On adopt, reuse the
+    // recorded password and wire the event stream; on cold-spawn, proceed as
+    // before; on error, surface it and skip server creation entirely.
+    let adopted = false;
+    // #1190: the adopted survivor's recorded binary/config hashes (from the
+    // handshake) — captured here so the adopted path can compare them against
+    // the on-disk build and surface a stale-engine notice.
+    let adoptedHashes: { binaryHash: string; configHash: string } | undefined;
+    try {
+      const lifecycleResult = await adoptOrSpawn(
+        handshakePath(),
+        buildLiveDeps(async () => {
+          // The cold-spawn callback is a no-op here — we handle the actual
+          // spawn below via ServerManager. Return a sentinel so the lifecycle
+          // function knows to proceed, but the real spawn is in the next block.
+          return { port: configuredPort || 0, pid: 0, password: serverPassword };
+        }, configuredPort > 0 ? configuredPort : 43117),
+      );
+      if (lifecycleResult.outcome === "adopted") {
+        adopted = true;
+        adoptedHashes = lifecycleResult.adoptedHashes;
+        // Replace the minted password with the recorded one — the surviving
+        // server was spawned with it, so every auth surface must carry it.
+        serverPassword = lifecycleResult.password;
+        serverAuthHeaders.Authorization = serverAuthHeader(serverPassword);
+        opencodeReadyUrl = new URL(`http://127.0.0.1:${lifecycleResult.port}`);
+        opencodeChannel.appendLine(
+          `[boot] ADOPTED surviving server on port ${lifecycleResult.port} (PID ${lifecycleResult.pid}) — no new spawn`,
+        );
+      } else if (lifecycleResult.outcome === "foreign-error" || lifecycleResult.outcome === "incompatible-error") {
+        opencodeChannel.appendLine(`[boot] ${lifecycleResult.error}`);
+        void vscode.window.showErrorMessage(`Amicode: ${lifecycleResult.error}`);
+        // Do NOT spawn on the occupied port — fall through to the rest of
+        // activation with no server. The user must fix the conflict.
+      } else {
+        // "cold-spawned" from the lifecycle's perspective — proceed to the
+        // real ServerManager spawn below.
+        opencodeChannel.appendLine(`[boot] no surviving server to adopt — cold-spawning`);
+      }
+    } catch (e) {
+      // Adoption check failed — non-fatal, proceed to cold-spawn.
+      opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
+    }
+
+    // #1147 (ADR 0020): keepalive helper — starts the ping loop for the
+    // given port/password. Called from BOTH the cold-spawn onReady and the
+    // adoption path so every active window pings the detached server.
+    const wireKeepalive = (keepalivePort: number, pw: string) => {
+      const graceSeconds = readGraceSeconds(vscode.workspace.getConfiguration("amicode"));
+      // #1187: pass the recorded server PID so the keepalive confirms the server
+      // is genuinely dead (isPidAlive) before deleting the handshake — a transient
+      // ping blip must not strand a still-alive daemonized server (which would
+      // force the next reload to cold-spawn onto the occupied port).
+      const hs = readHandshake(handshakePath());
+      const recordedPid = hs.status === "ok" ? hs.record.pid : undefined;
+      startKeepalive({
+        port: keepalivePort,
+        password: pw,
+        graceSeconds,
+        pid: recordedPid,
+        deps: {
+          pingServer: pingKeepalive,
+          pidAlive: isPidAlive,
+          onServerGone: () => {
+            opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
+            deleteHandshake();
+            statusBar?.setServerReady(false);
+            opencodeReadyUrl = undefined;
+          },
+          log: (line) => opencodeChannel.appendLine(line),
+        },
+      });
+      opencodeChannel.appendLine(
+        `[keepalive] started (port=${keepalivePort}, grace=${graceSeconds}s, pid=${recordedPid ?? "?"})`,
+      );
+    };
+
+    // #1181/#1190 (ADR 0020): compute the config content ABOVE the adopt/
+    // cold-spawn split so BOTH paths can hash it — cold-spawn records it in the
+    // handshake, and the adopted path compares it against the survivor's
+    // recorded hash (auditAdoptedEngine) to detect a stale engine.
+    const configContent = buildOpencodeConfigContent(
+      opencodeProject.agentsPath,
+      opencodeProject.templatePath,
+      runsRoot,
+      undefined,
+      undefined,
+      opencodeProject.skillPaths,
+      opencodeProject.skillsStageDir,
+      opencodeProject.vaultDir,
+      // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
+      opencodeProject.mounts,
+      // Model pin. ONLY an explicit `amicode.defaultModel` pins config.model
+      // (which is authoritative — it outranks the user's recent pick). Empty
+      // → resolveModelPin() is undefined (NO forced pin), so opencode uses
+      // the user's recent selection, else the provider default. A hardcoded
+      // fallback here used to override the user's own choice. The in-chat
+      // picker still overrides per session.
+      // Validate: don't inject a pin that references an unconnected provider —
+      // it causes 500s when the server tries to resolve it.
+      validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
+      // Telemetry gate → experimental.openTelemetry (span generation), coupled
+      // to the exporter env this same spawnEnv resolves.
+      telemetryOpen(),
+      // Context plugin: injects live stack state (solver mode, routing,
+      // active problem, live runs) per system-prompt build.
+      [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
+    );
+
+    if (!adopted) {
+    // #1181: the hashes the handshake records (computed once, so the hook is sync).
+    // hashFile is best-effort — an unreadable binary yields "" (treated as changed).
+    const coldSpawnBinaryHash = await hashFile(binary).catch(() => "");
+    const coldSpawnConfigHash = hashString(configContent);
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -841,37 +966,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        configContent: buildOpencodeConfigContent(
-          opencodeProject.agentsPath,
-          opencodeProject.templatePath,
-          runsRoot,
-          undefined,
-          undefined,
-          opencodeProject.skillPaths,
-          opencodeProject.skillsStageDir,
-          opencodeProject.vaultDir,
-          // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
-          opencodeProject.mounts,
-          // Model pin. ONLY an explicit `amicode.defaultModel` pins config.model
-          // (which is authoritative — it outranks the user's recent pick). Empty
-          // → resolveModelPin() is undefined (NO forced pin), so opencode uses
-          // the user's recent selection, else the provider default. A hardcoded
-          // fallback here used to override the user's own choice. The in-chat
-          // picker still overrides per session.
-          // Validate: don't inject a pin that references an unconnected provider —
-          // it causes 500s when the server tries to resolve it.
-          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
-          // Telemetry gate → experimental.openTelemetry (span generation), coupled
-          // to the exporter env this same spawnEnv resolves.
-          telemetryOpen(),
-          // Context plugin: injects live stack state (solver mode, routing,
-          // active problem, live runs) per system-prompt build.
-          [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
-        ),
+        configContent,
       }),
       channel: opencodeChannel,
+      // #1146 (ADR 0020): detached spawn — stdio goes to the log file;
+      // the output channel tails it. The server survives the host's exit.
+      logFile: serverLogPath(),
+      // #1181 (ADR 0020): write the handshake once the server is healthy — the
+      // durable record a later reload adopts (the linchpin the feature was
+      // missing). Best-effort; a failed write logs and never blocks boot.
+      afterHealthy: coldSpawnHandshakeHook({
+        binaryHash: coldSpawnBinaryHash,
+        configHash: coldSpawnConfigHash,
+        password: serverPassword,
+        log: (l) => opencodeChannel.appendLine(l),
+      }),
     });
-    ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
+    ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 
     // Amicode service (#451 M1; #822 added the shelf + the engine proxy; #823
     // is the M3 cutover): the extension-host owner of the 31 ported amicode
@@ -931,6 +1042,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
 
+    // #1188: the chat frame origin is the amicode service shelf when the service
+    // is up, else the engine origin (stock opencode). On a reload a panel can
+    // come up on the engine fallback before the service is ready — re-frame any
+    // such live panel now that the service handle is resolved, and again whenever
+    // a panel signals app-ready (a straggler that mounted during the boot window).
+    // Both are idempotent: a no-op once a panel is already on the service origin.
+    ChatPanel.reframeAll(amicodeService?.url);
+    ChatPanel.onAppReadyPersistent(() => ChatPanel.reframeAll(amicodeService?.url));
+
     // Solver-mode switcher (rchari/solver-wire): the app's toggle POSTs
     // {status:"switching"}; we do the REAL switch — grant/revoke the issimo
     // entitlement, re-prep the session project (skills/scores/allowlist follow
@@ -983,10 +1103,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
               // Context plugin: injects live stack state per system-prompt build.
               [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
-            ),
-          }),
-          channel: opencodeChannel,
-        });
+        ),
+      }),
+      channel: opencodeChannel,
+      // #1146 (ADR 0020): detached spawn — stdio goes to the log file;
+      // the output channel tails it. The server survives the host's exit.
+      logFile: serverLogPath(),
+    });
         serverManager.onReady((url) => {
           opencodeReadyUrl = url;
         });
@@ -1041,6 +1164,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // #1147: start keepalive after cold-spawn health passes
+      const readyPort = parseInt(url.port || "0", 10);
+      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
       // Onboarding gate: if no model is configured, open the Stage 0 webview
       // instead of chat. The webview will fire onOnboardingComplete when done,
       // which then opens chat.
@@ -1092,6 +1218,93 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
       opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
     });
+    } // end if (!adopted)
+
+    // #1145: adopted path — the server is already running, wire the event
+    // stream + chat to the adopted server's URL with the recorded password.
+    if (adopted && opencodeReadyUrl) {
+      sseClient = new OpencodeEventClient({
+        channel: opencodeChannel,
+        statusBar,
+        authorization: serverAuthHeaders.Authorization,
+      });
+      ctx.subscriptions.push(sseClient);
+      statusBar?.setServerReady(true);
+      sseClient.connect(opencodeReadyUrl);
+      // #1147: start keepalive after adoption
+      const adoptedPort = parseInt(opencodeReadyUrl.port || "0", 10);
+      if (adoptedPort > 0) wireKeepalive(adoptedPort, serverPassword);
+      // #1190 (ADR 0020): the gate matched only protocolVersion, so the adopted
+      // survivor may be running a DIFFERENT build than what is now on disk.
+      // Compare hashes and, if they diverge, surface a non-blocking notice that
+      // offers a restart onto the current build (kill survivor → drop handshake
+      // → reload → clean cold-spawn). Adopt-then-notice keeps in-flight turns.
+      if (binary && adoptedHashes && adoptedPort > 0) {
+        void auditAdoptedEngine(
+          adoptedHashes,
+          { binaryPath: binary, configContent },
+          {
+            hashFile,
+            hashString,
+            notify: {
+              showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
+              onRestartRequested: () => restartAdoptedEngine({
+                port: adoptedPort,
+                reclaimPort: reclaimOrphanPort,
+                deleteHandshake,
+                reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+                log: (l) => opencodeChannel.appendLine(l),
+              }),
+            },
+          },
+        );
+      }
+      // #1192: the amicode service (the branded app shelf on configuredPort+1)
+      // runs INSIDE the extension host — it dies with every window reload and
+      // must be re-created every activation, regardless of whether the engine
+      // was adopted or cold-spawned. Without this, frameUrl() returns the raw
+      // engine origin (stock opencode) because amicodeService is undefined.
+      const adoptedServiceBoot = await startAmicodeService(opencodeChannel, {
+        engine: {
+          password: serverPassword,
+          getUrl: () => opencodeReadyUrl?.toString(),
+        },
+        modelRouting: {
+          agentsDir: path.join(ctx.extensionPath, "agents"),
+          getProviders: async () => {
+            const engineUrl = opencodeReadyUrl?.toString();
+            if (!engineUrl) return undefined;
+            return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
+          },
+        },
+        appDistRoot: resolveAppDistRoot(
+          vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
+          ctx.extensionPath,
+        ),
+        fleetActivation: () =>
+          resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+        port: configuredPort > 0 ? configuredPort + 1 : undefined,
+      });
+      amicodeService = adoptedServiceBoot ?? undefined;
+      ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));
+      // #1188: re-frame any panel that came up on the engine fallback before
+      // the service was ready, and hook app-ready for stragglers.
+      ChatPanel.reframeAll(amicodeService?.url);
+      ChatPanel.onAppReadyPersistent(() => ChatPanel.reframeAll(amicodeService?.url));
+      opencodeChannel.appendLine(
+        `[boot] amicode service started on adopted path${amicodeService?.url ? ` (${amicodeService.url})` : ""}`,
+      );
+      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      }
+      void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
+        opencodeChannel.appendLine(
+          sig.ok
+            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
+            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
+        );
+      });
+    }
   }
 
   // ── #663: workspace-projects bridge ──────────────────────────────────────
@@ -1187,6 +1400,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
       }),
       channel: opencodeChannel,
+      logFile: serverLogPath(),
     });
     serverManager.onReady((url) => {
       opencodeReadyUrl = url;
@@ -1486,6 +1700,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getSpawnEnv: () => currentSpawnEnv,
     channel: opencodeChannel,
     getAmicodeService: () => amicodeService,
+    // #1149 (ADR 0020): the terminal reads the server password from the
+    // handshake (the surviving server's actual credential), not the stale
+    // spawn environment. After a window reload the spawn env carries the OLD
+    // boot's password; the handshake carries the LIVE server's.
+    getHandshakePassword: () => {
+      const hs = readHandshake();
+      return hs.status === "ok" ? hs.record.password : undefined;
+    },
   });
 
   // Canonical-opencode runtime updater (#451 M4): managed install under
@@ -1624,9 +1846,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           ),
         }),
         channel: opencodeChannel,
+        logFile: serverLogPath(),
       });
       serverManager = freshManager;
-      ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
+      ctx.subscriptions.push({ dispose: () => freshManager.detach() });
       freshManager.onReady((url) => {
         opencodeReadyUrl = url;
         statusBar?.setServerReady(true);
@@ -2150,6 +2373,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         return;
       }
       await serverManager?.stop();
+      // #1146 (ADR 0020): Restart is the deliberate kill — delete the
+      // handshake so the next activation cold-spawns instead of adopting
+      // the (now-dead) old server.
+      deleteHandshake();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
       try {
@@ -2158,6 +2385,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
+    // #1149 (ADR 0020): Stop server — the deliberate kill alongside Restart.
+    // Gated on in-flight turns (warns first). Always clears the handshake
+    // (#1144's primitive) so no stale record survives the kill.
+    vscode.commands.registerCommand("amicode.stopServer", () =>
+      void stopServer({
+        // In-flight turn detection: wired to the SSE event stream's liveness
+        // state. A "live" stream means the server is actively communicating;
+        // more granular per-session turn tracking is a future refinement.
+        hasInFlightTurns: () => sseClient?.sseState === "live",
+        showWarning: (msg, ...items) =>
+          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
+        stop: async () => {
+          await serverManager?.stop();
+          statusBar?.setServerReady(false);
+          opencodeReadyUrl = undefined;
+          opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
+        },
+        deleteHandshake: () => deleteHandshake(),
+      }),
+    ),
     // Issue #573: skill provider changes take effect on next session start.
     // Live hot-reload (rewriting AGENTS.md while the server reads it) was
     // causing crashes — deferred until the engine supports atomic reload.
@@ -2247,8 +2494,15 @@ export function deactivate(): void {
   // Distill trigger 2 (session close): queue-only — a drain must not delay
   // shutdown; the next activation or trigger drains the queue.
   if (distillerSetup) triggerSweep(distillerSetup, false);
+  // #1147 (ADR 0020): stop the keepalive ping loop — the server's self-shutdown
+  // timer will handle exit after the grace window expires (if no other window
+  // is still pinging).
+  stopKeepalive();
   sseClient?.dispose();
-  serverManager?.stop();
+  // #1146 (ADR 0020): detach, not kill — the server survives the extension
+  // host's exit and is re-adopted on the next activation (#1145).
+  // Deliberate kills come from Restart (#1146) or Stop (#1149).
+  serverManager?.detach();
   runsManager?.dispose();
   statusBar?.dispose();
 }
