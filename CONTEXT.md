@@ -212,6 +212,14 @@ _Avoid_: Rebuild Remotely / Rebuild from Latest (retired wordings), remote rebui
 The retired mechanism by which the developer-tools "opencode repo path" field resolved a fork binary from a path on disk and set the `opencodeBinary` override to it, restarting the server. Retired with fork absorption (#1091/#1115): the binary is now produced by the in-repo overlay build, so the full local Rebuild is the single dev build path. The general `opencodeBinary` override itself survives — it is consumed by the boot/health paths and still cleared on the developer-mode toggle-off; only the path-field-fed swap is gone.
 _Avoid_: opencode repo path field (removed), binary override (the general override is not the live-swap)
 
+**Canary**:
+The fleet service that pre-tests the `dev` integration branch on real fleet state each night — CI-green artifacts installed on always-on arms (hub server-half, mini client-half), never on a daily driver — reporting a wave-ready verdict through the morning brief and filing findings to the board. Complements CI: clean runners prove the PR; the Canary proves the integration on live fleet state.
+_Avoid_: nightly build (it installs, never builds), CI (what it builds on, not what it is), test machine
+
+**Wave**:
+The deliberate `dev` → `main` graduation act — the human acceptance that makes main the trunk Aaron has personally tested. Preceded by the Canary's mechanical verdict; never replaced by it.
+_Avoid_: release (that is the tag flow), promote (reserved for the alpha-promotion act), merge (too generic — a Wave is a specific, human merge)
+
 ### Orthogonal axes
 
 **Domain Pack**:
