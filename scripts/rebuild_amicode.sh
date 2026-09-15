@@ -20,7 +20,7 @@
 #                  installer; --yes never implies it (fail-closed, OB9).
 #
 # Two thin shims wrap this: rebuild_amicode_locally.sh -> --mode local,
-# rebuild_amicode_remotely.sh -> --mode main. The shim-injected mode wins over
+# rebuild_amicode_from_main.sh -> --mode main. The shim-injected mode wins over
 # any forwarded --mode (OB5).
 #
 # The rebuild recipe (both modes, matching the in-app handler order):

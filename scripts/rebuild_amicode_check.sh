@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_ROOT/scripts"
 UNIFIED="$SCRIPTS_DIR/rebuild_amicode.sh"
 SHIM_LOCAL="$SCRIPTS_DIR/rebuild_amicode_locally.sh"
-SHIM_MAIN="$SCRIPTS_DIR/rebuild_amicode_remotely.sh"
+SHIM_MAIN="$SCRIPTS_DIR/rebuild_amicode_from_main.sh"
 THREE=("$UNIFIED" "$SHIM_LOCAL" "$SHIM_MAIN")
 
 pass_n=0
