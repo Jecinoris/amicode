@@ -2531,7 +2531,9 @@ export function MessageTimeline(props: {
                   action: async () => ({ ok: true }),
                   prompt: (text) => {
                     const id = sessionID()
-                    if (id) void sdk().client.session.promptAsync({ sessionID: id, parts: [{ type: "text", text }] })
+                    // #1206: pass the session's current agent so a widget prompt
+                    // doesn't silently flip the session to the global default (plan).
+                    if (id) void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
                   },
                   open: () => {},
                 },
@@ -2555,7 +2557,9 @@ export function MessageTimeline(props: {
               onAsk={(text) => {
                 const id = sessionID()
                 if (!id) return
-                void sdk().client.session.promptAsync({ sessionID: id, parts: [{ type: "text", text }] })
+                // #1206: the amicode_ask answer is a new user message — pass the
+                // session's current agent so it doesn't silently flip to plan.
+                void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
               }}
               // Warrant transport (spec-20260727-164748 §9.5). NOT routed through
               // onAsk on purpose: an approval delivered as a chat message would be

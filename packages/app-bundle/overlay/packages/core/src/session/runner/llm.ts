@@ -224,7 +224,10 @@ const layer = Layer.effect(
         system: [agent.info?.system, filteredSystem.baseline]
           .filter((part): part is string => part !== undefined && part.length > 0)
           .map(SystemPart.make),
-        messages: [...toLLMMessages(context, model), ...(isLastStep ? [Message.assistant(MAX_STEPS_PROMPT)] : [])],
+        // Use a user message (not assistant prefill) so providers that reject
+        // trailing assistant messages (e.g. Bedrock Converse) still receive
+        // the max-steps instruction.
+        messages: [...toLLMMessages(context, model), ...(isLastStep ? [Message.user(MAX_STEPS_PROMPT)] : [])],
         tools: toolMaterialization?.definitions ?? [],
         toolChoice: isLastStep ? "none" : undefined,
       })

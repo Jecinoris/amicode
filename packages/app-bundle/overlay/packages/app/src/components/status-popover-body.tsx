@@ -713,16 +713,54 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
   // Fallback to window.open when the server does not return a URL (e.g. token-based
   // google probe that already has a cached URL). The overlay tracks validating state
   // while the round-trip is in flight so the card shows the waiting-browser copy.
+  // ── browser-auth polling: after a browser OAuth flow starts (Slack, Google),
+  // poll /amicode/connections until the target connection settles. The OAuth
+  // callback writes the credential on a background HTTP server, so without
+  // polling the panel only updates when the user closes and reopens it.
+  // SCOPED: tracks which connection id started the auth so the poll stops as
+  // soon as THAT connection settles — not every 2s for 2 minutes.
+  // NOTE: the main connections resource only fetches when the popover is
+  // shown (line 621). During browser OAuth the popover is likely closed, so
+  // refetchConnections() is a no-op. This poll fetches independently and
+  // force-refreshes when the OAuth completes.
+  let authPollTimer: ReturnType<typeof setInterval> | undefined
+  let authPollTargetId: string | undefined
+  const stopAuthPoll = () => {
+    if (authPollTimer) { clearInterval(authPollTimer); authPollTimer = undefined }
+    authPollTargetId = undefined
+  }
+  onCleanup(stopAuthPoll)
+
   const onStartAuth = (payload: import("@opencode-ai/ui/amicode-connections-tab").StartAuthPayload) => {
     void runConnectionAction(payload.id, "/amicode/connections/auth", payload).then((result) => {
-      // The server's BrowserOpenFailed event carries the URL when the helper fails;
-      // as a belt-and-suspenders, if the action response itself carries a URL,
-      // open it here via the browser. The status-popover runs in the main app
-      // (not the chat iframe), so window.open is not blocked.
       const maybeUrl = (result as unknown as { url?: string })?.url
       if (maybeUrl && typeof maybeUrl === "string" && /^https:\/\//i.test(maybeUrl)) {
         try { window.open(maybeUrl, "_blank", "noopener") } catch {}
       }
+      // Start polling for the browser-auth completion — scoped to this connection.
+      // Polls independently of the resource (which pauses when popover closes).
+      stopAuthPoll()
+      authPollTargetId = payload.id
+      let pollCount = 0
+      authPollTimer = setInterval(async () => {
+        pollCount++
+        if (pollCount > 60) { stopAuthPoll(); return }
+        // Independent fetch — works even when the popover is closed
+        const conn = server.current
+        if (!conn) return
+        try {
+          const res = await fetch(new URL("/amicode/connections", conn.http.url), { headers: amicodeHeaders(conn) })
+          if (!res.ok) return
+          const data = parseConnectionsResponse(await res.json() as unknown)
+          if (!data.ok) return
+          const target = data.connections.find((c) => c.id === authPollTargetId)
+          if (target && target.state === "connected") {
+            stopAuthPoll()
+            // Force the main resource to refresh so the UI updates when the popover reopens
+            refetchConnections()
+          }
+        } catch { /* network error — keep polling */ }
+      }, 2_000)
     })
   }
   const connectionsLabels = createMemo(() => ({

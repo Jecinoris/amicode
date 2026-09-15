@@ -2440,3 +2440,46 @@ it.instance(
     }),
   30_000,
 )
+
+// #1206: a promptAsync call that omits `agent` must continue the session's
+// current agent, not silently reset to the global default_agent ("plan").
+// This is the exact amicode_ask answer-button transition that flipped
+// develop/research sessions into plan mode mid-campaign.
+it.instance("omit-agent prompt continues the session's current agent (#1206)", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+
+    // Create a session and send the first message with agent: "build"
+    // to establish the session's tracked agent.
+    const chat = yield* sessions.create({})
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "initial turn" }],
+    })
+
+    // Verify the session now tracks "build" as its agent.
+    const afterFirst = yield* sessions.get(chat.id).pipe(Effect.orDie)
+    expect(afterFirst.agent).toBe("build")
+
+    // Now send a second prompt WITHOUT an agent — this is the amicode_ask
+    // answer path: sdk().client.session.promptAsync({ sessionID, parts })
+    // with no agent field.
+    const second = yield* prompt.prompt({
+      sessionID: chat.id,
+      noReply: true,
+      parts: [{ type: "text", text: "amicode_ask button click" }],
+    })
+
+    // The user message must inherit the session's agent ("build"), not
+    // the global default_agent ("plan").
+    expect(second.info.agent).toBe("build")
+
+    // The session's tracked agent must not have changed.
+    const afterSecond = yield* sessions.get(chat.id).pipe(Effect.orDie)
+    expect(afterSecond.agent).toBe("build")
+  }),
+)

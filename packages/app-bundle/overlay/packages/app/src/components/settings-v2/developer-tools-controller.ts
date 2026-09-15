@@ -50,25 +50,42 @@ export function createDeveloperToolsController() {
         // Rebuild completed during a reload — show success (persists until dialog closes)
         localStorage.removeItem("amicode:devtools-rebuilding")
         localStorage.removeItem("amicode:devtools-rebuilt")
+        localStorage.removeItem("amicode:devtools-rebuild-started")
         setRebuildState("rebuilt")
       } else if (wasRebuilding) {
-        // Still rebuilding — restore the indicator (iframe reloaded mid-rebuild)
-        setRebuildState("rebuilding")
-        // Safety timeout: clear after 5 min to avoid permanently stuck state
-        setTimeout(() => {
-          if (rebuildState() === "rebuilding") {
-            applyRebuildFlagMutation(rebuildFlagMutation("failed"))
-            setRebuildState("failed")
-            setRebuildError({
-              message: "Rebuild timed out",
-              fix: [
-                "Close the Settings dialog and check the 'Amicode — opencode' output channel.",
-                "Try the rebuild again.",
-                "If it keeps timing out, report the issue.",
-              ],
-            })
-          }
-        }, 300_000)
+        // Check if the build is stale. The "done" postMessage can race the
+        // window reload (extension → shell → iframe), leaving the flag stuck.
+        // A real build takes 30-120s; if the flag is older than 30s AND the
+        // extension host is healthy (we loaded this page), the build completed
+        // and the message was lost. Clear it.
+        const startedAt = Number(localStorage.getItem("amicode:devtools-rebuild-started") || "0")
+        const staleMs = 30_000 // 30 seconds — if we reloaded and the host is up, it's done
+        if (startedAt > 0 && Date.now() - startedAt > staleMs) {
+          // The window reloaded successfully after a rebuild — the build
+          // completed but the "done" message didn't land. Treat as success.
+          applyRebuildFlagMutation(rebuildFlagMutation("done"))
+          localStorage.removeItem("amicode:devtools-rebuild-started")
+          setRebuildState("rebuilt")
+        } else {
+          // Still rebuilding — restore the indicator (iframe reloaded mid-build)
+          setRebuildState("rebuilding")
+          // Safety timeout: clear after 5 min to avoid permanently stuck state
+          setTimeout(() => {
+            if (rebuildState() === "rebuilding") {
+              applyRebuildFlagMutation(rebuildFlagMutation("failed"))
+              localStorage.removeItem("amicode:devtools-rebuild-started")
+              setRebuildState("failed")
+              setRebuildError({
+                message: "Rebuild timed out",
+                fix: [
+                  "Close the Settings dialog and check the 'Amicode — opencode' output channel.",
+                  "Try the rebuild again.",
+                  "If it keeps timing out, report the issue.",
+                ],
+              })
+            }
+          }, 300_000)
+        }
       } else if (didFinish) {
         // Legacy path (rebuilding flag missing but rebuilt is set)
         localStorage.removeItem("amicode:devtools-rebuilt")
@@ -116,6 +133,7 @@ export function createDeveloperToolsController() {
         setRebuildError(undefined)
       } else if (d.state === "failed") {
         applyRebuildFlagMutation(rebuildFlagMutation("failed"))
+        try { localStorage.removeItem("amicode:devtools-rebuild-started") } catch { /* non-critical */ }
         setRebuildState("failed")
         // Accept structured errors (new) or flat strings (legacy bridge compat).
         if (d.error && typeof d.error === "object" && typeof d.error.message === "string") {
@@ -137,6 +155,7 @@ export function createDeveloperToolsController() {
         // after the window reload correctly shows "Rebuilt!" rather than
         // "Rebuilding..." (#940). The window reload follows shortly.
         applyRebuildFlagMutation(rebuildFlagMutation("done"))
+        try { localStorage.removeItem("amicode:devtools-rebuild-started") } catch { /* non-critical */ }
       }
     }
 
@@ -191,6 +210,7 @@ export function createDeveloperToolsController() {
     setRebuildState("rebuilding")
     setRebuildError(undefined)
     applyRebuildFlagMutation(rebuildFlagMutation("start"))
+    try { localStorage.setItem("amicode:devtools-rebuild-started", String(Date.now())) } catch { /* non-critical */ }
     window.parent.postMessage(
       {
         source: "amicode",
