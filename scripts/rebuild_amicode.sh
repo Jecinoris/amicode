@@ -347,11 +347,57 @@ build_amicode() {
   echo "==> Building amicode extension (pnpm -r build)..."
   (cd "$AMICODE_ROOT" && pnpm -r build)
 
-  echo ""
-  echo "==> Building binary from the local overlay (build:binary)..."
-  # build:binary materializes base+overlay and bun-compiles — no fork, no release.
-  local bun; bun="$(resolve_bun)"
-  (cd "$AMICODE_ROOT" && AMICODE_BUN="$bun" pnpm --filter amicode run build:binary)
+  # ── Overlay-change gate (parity with the button's #1178 skip guard) ───────
+  # The engine binary build (bun build --compile) is NON-DETERMINISTIC: the
+  # same overlay source produces a different binary hash on each invocation.
+  # So we compare the overlay SOURCE tree hash (deterministic) against a cached
+  # marker, and skip BOTH the binary build AND the server kill when unchanged.
+  # This matches the settings button's approach in chat_bridge.ts.
+  OVERLAY_DIR="$AMICODE_ROOT/packages/app-bundle/overlay"
+  OVERLAY_CACHE="${HOME}/.amico/ops/server/overlay-hash.txt"
+  local current_overlay_hash="" cached_overlay_hash=""
+  # Compute the overlay source tree hash using the same algorithm as
+  # hashDirectoryTree in server_handshake.ts (walk + sort by relPath +
+  # SHA-256 of relPath\0contentHash\0 for each file).
+  current_overlay_hash="$(node -e "
+    const path=require('path'),{createHash}=require('crypto'),
+      {readdirSync,readFileSync}=require('fs');
+    const entries=[];
+    (function walk(dir){
+      let d;try{d=readdirSync(dir,{withFileTypes:true})}catch{return}
+      for(const e of d){const f=path.join(dir,e.name);
+        if(e.isDirectory())walk(f);
+        else if(e.isFile()){
+          const c=createHash('sha256').update(readFileSync(f,'utf8')).digest('hex');
+          entries.push({r:path.relative('$OVERLAY_DIR',f),c})}}
+    })('$OVERLAY_DIR');
+    entries.sort((a,b)=>a.r.localeCompare(b.r));
+    const h=createHash('sha256');
+    for(const{r,c}of entries)h.update(r+'\0'+c+'\0');
+    process.stdout.write(h.digest('hex'));
+  " 2>/dev/null || true)"
+  if [ -f "$OVERLAY_CACHE" ]; then
+    cached_overlay_hash="$(cat "$OVERLAY_CACHE" 2>/dev/null | tr -d '[:space:]')"
+  fi
+
+  SKIP_ENGINE=0
+  if [ -n "$current_overlay_hash" ] && [ -n "$cached_overlay_hash" ] \
+     && [ "$current_overlay_hash" = "$cached_overlay_hash" ]; then
+    SKIP_ENGINE=1
+    echo ""
+    echo "==> Overlay unchanged (hash match) — skipping engine build (server stays alive)"
+  else
+    echo ""
+    echo "==> Building binary from the local overlay (build:binary)..."
+    # build:binary materializes base+overlay and bun-compiles — no fork, no release.
+    local bun; bun="$(resolve_bun)"
+    (cd "$AMICODE_ROOT" && AMICODE_BUN="$bun" pnpm --filter amicode run build:binary)
+    # Record the overlay hash the freshly-built binary was built from.
+    if [ -n "$current_overlay_hash" ]; then
+      mkdir -p "$(dirname "$OVERLAY_CACHE")"
+      echo "$current_overlay_hash" > "$OVERLAY_CACHE"
+    fi
+  fi
 
   echo ""
   echo "==> Building app bundle from the local overlay (build:app)..."
@@ -703,24 +749,15 @@ main() {
   # and the stale-engine audit (#1190) handles any config drift with a non-
   # blocking notice on the next reload.
   #
-  # Only kill the surviving server when the BINARY actually changed. Compare
-  # the freshly built binary's SHA-256 against the handshake's recorded hash.
-  local key built_bin recorded_hash="" new_hash=""
-  key="$(platform_key)"
-  built_bin="$EXT_PKG/vendor/opencode/$key/opencode"
-  if [ -f "$HANDSHAKE_PATH" ]; then
-    recorded_hash="$(node -e "try{const h=JSON.parse(require('fs').readFileSync('$HANDSHAKE_PATH','utf8'));process.stdout.write(String(h.binaryHash||''))}catch{}" 2>/dev/null || true)"
-  fi
-  if [ -f "$built_bin" ]; then
-    new_hash="$(shasum -a 256 "$built_bin" 2>/dev/null | cut -d' ' -f1 || true)"
-  fi
-
-  if [ -n "$recorded_hash" ] && [ -n "$new_hash" ] && [ "$recorded_hash" = "$new_hash" ]; then
-    echo "==> Engine binary unchanged (hash match) — server survives this rebuild"
+  # SKIP_ENGINE is set by build_amicode's overlay-change gate: it compares the
+  # overlay SOURCE hash (deterministic) against a cached marker. When the overlay
+  # is unchanged, the binary build is skipped entirely and the server stays alive.
+  # (bun build --compile is non-deterministic, so comparing binary OUTPUT hashes
+  # produces false mismatches — the overlay source hash is the correct input.)
+  if [ "${SKIP_ENGINE:-0}" -eq 1 ]; then
+    echo "==> Server survives this rebuild (overlay unchanged)"
   else
-    # Binary changed (or no handshake / can't hash) — kill the old server so the
-    # next activation cold-spawns the NEW binary on the freed port.
-    echo "==> Engine binary changed — stopping surviving server before deploy"
+    echo "==> Engine overlay changed — stopping surviving server before deploy"
     stop_surviving_server
   fi
 
