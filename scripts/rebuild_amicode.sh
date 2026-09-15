@@ -696,10 +696,33 @@ main() {
   # Build.
   build_amicode
 
-  # Stop any surviving detached server BEFORE deploying — the rebuild swaps
-  # the binary underneath it, so the new extension would fail to cold-spawn
-  # on the occupied port (#1146, ADR 0020 lifecycle gap).
-  stop_surviving_server
+  # ── Conditional server stop (#1192, ADR 0020) ─────────────────────────────
+  # The engine server is daemonized (PPID=1) and survives window reloads so
+  # in-flight turns continue. A rebuild that only changes extension code / the
+  # app shelf (dist/) does NOT need to kill it — the server binary is unchanged,
+  # and the stale-engine audit (#1190) handles any config drift with a non-
+  # blocking notice on the next reload.
+  #
+  # Only kill the surviving server when the BINARY actually changed. Compare
+  # the freshly built binary's SHA-256 against the handshake's recorded hash.
+  local key built_bin recorded_hash="" new_hash=""
+  key="$(platform_key)"
+  built_bin="$EXT_PKG/vendor/opencode/$key/opencode"
+  if [ -f "$HANDSHAKE_PATH" ]; then
+    recorded_hash="$(node -e "try{const h=JSON.parse(require('fs').readFileSync('$HANDSHAKE_PATH','utf8'));process.stdout.write(String(h.binaryHash||''))}catch{}" 2>/dev/null || true)"
+  fi
+  if [ -f "$built_bin" ]; then
+    new_hash="$(shasum -a 256 "$built_bin" 2>/dev/null | cut -d' ' -f1 || true)"
+  fi
+
+  if [ -n "$recorded_hash" ] && [ -n "$new_hash" ] && [ "$recorded_hash" = "$new_hash" ]; then
+    echo "==> Engine binary unchanged (hash match) — server survives this rebuild"
+  else
+    # Binary changed (or no handshake / can't hash) — kill the old server so the
+    # next activation cold-spawns the NEW binary on the freed port.
+    echo "==> Engine binary changed — stopping surviving server before deploy"
+    stop_surviving_server
+  fi
 
   # Deploy into the installed extension.
   deploy_into_installed_ext
