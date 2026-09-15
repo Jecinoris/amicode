@@ -42,6 +42,8 @@
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
+    "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
+    "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
     "packages/opencode/script/httpapi-exercise.ts": "772bd2cf5748ca90c5d5790c2d044237518cc8ede0411fc4ba28b9d7440ba28c",
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
@@ -120,7 +122,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "a78d557256283fd05657d999b2a6babc0bcb5ae3dcfa2cb07f770ebb602a94a1",
+    "packages/app/src/components/status-popover-body.tsx": "06b457108c48969d3b7419d1d2f3dc7e38a9b18cb45735dd4963ca0f266f6129",
     "packages/app/src/components/status-popover-indicator.test.ts": "9afc7b49d9021a94d74f3f777178230ae13bd26e5749da0cee4d3378eacacacd",
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -256,13 +258,17 @@
     "packages/core/test/filesystem/watcher.test.ts": "ade83f34270bc33c0a8cfd91766d5400a29927818f9b7f33e364bc26132ef7d9",
     "packages/core/test/fixture/location.ts": "8e93d87c20305911dc4583ab1717766b1f70eed3e687dac040ad2c646c25ceea",
     "packages/core/test/system-context/builtins.test.ts": "2331a35ab10b3e69f5f5d2dd462ec56000246a747bccec77db783144a91ebbea",
+    "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
+    "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
+    "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
     "packages/opencode/src/provider/provider.ts": "671f6d8de83f919ddaa69b8240cacd82e2b8202ab505d4334175f2858bbd8c32",
+    "packages/opencode/src/provider/transform.ts": "2ae62827a8190531a3244dc890a02297f8bd84bb90926dc1f685453c367e05de",
     "packages/opencode/src/server/server.ts": "56b3c2047917aa80d1dfb29bfa9839bcc2ad7f5a6f4db12103cd962a98fba866",
     "packages/opencode/src/session/business-record.ts": "d82db061055d0dd26ad95b34bff688ce23fd06a8fb9248dd335c6726c6ff0f5e",
     "packages/opencode/src/session/compaction.ts": "fd6159a8b04050706b6968c7a1b091f79d06e6e4aa988a12629a7616b8128e94",
@@ -276,6 +282,7 @@
     "packages/opencode/src/session/prose-guard.ts": "dd6f8dfdc41b9cad3406ac586db9a60f7ee0a040b41550d6c55da2d040dc7c13",
     "packages/opencode/src/session/receipt-privacy.ts": "92ba8a92d4ddc0d18249efa5efdf600a32ebc0453d605b8c747cd4bcbd6d19a9",
     "packages/opencode/src/session/receipt.ts": "06fd30326424112b8dacd756e4bba5424b3a7a2d10318464a5670aeabb0c4808",
+    "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c",
     "packages/opencode/src/session/rollout.ts": "55518da37d6d4d1298eeab1c7ee208f59b80b7246f3370438de98ad774e4b02e",
     "packages/opencode/src/session/session.ts": "1d94c364a55c3124ba6ab762f599cc4194905d7e23ec91ba79552671cd4d86c7",
     "packages/opencode/src/session/summary.ts": "09f546db362a992156bdb4901cce58e495bd38bab6ba41b4386cca77bebab7f3",
@@ -298,6 +305,7 @@
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
     "packages/opencode/test/provider/harmoniqs-no-tools.test.ts": "ac455d754c1a61791fa45b18db5322ec2d472ff71778fbed1d412ec749b4b7b9",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
+    "packages/opencode/test/provider/transform.test.ts": "670656f51402d5c242856b3bd41cd15957065364d6cb724efd4f9cac0dda400e",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "2852289427fadaf6133b556af02f7e7b369b2a4df53ababc39531fe85bcc9d17",
     "packages/opencode/test/server/amicode-connections.test.ts": "0d916321a42e321d44e0db13a6966985deaf77cea48470d11eb8b434a464b7cd",
     "packages/opencode/test/server/amicode-credentials.test.ts": "ba77d064fd2be799930524510ce6e32c6f6a0d144d3cdf41673a8283dbe95bf6",
@@ -409,12 +417,12 @@
     "packages/ui/src/amicode/card.stories.tsx": "b1591abb4af426b0eb08588ea1585336a392d755b5d308cb31f17cb65acf5a3e",
     "packages/ui/src/amicode/card.tsx": "e5198e40923a77c3ed6a7aa235401bdeb20db6fbdb81f1ffeb847962dd1122e1",
     "packages/ui/src/amicode/connection-icon.tsx": "2b36c05209a3b5091c6407d59add58fb51ec34724ae6411af85c3dcc797a9987",
-    "packages/ui/src/amicode/connection-picker.tsx": "12cc6f142ee109580442a278286f06118a2a35239cabeaef6d60c0dac1a7ed3f",
+    "packages/ui/src/amicode/connection-picker.tsx": "1d963cbd8af1087ba0e09d3edffc0618ef8061cd6f26dd7d049451b670d1a475",
     "packages/ui/src/amicode/connections-paths.test.ts": "07c86e8e04700cdbd55bff8db342a8400d85114d76bc73fee8205e9162953f2a",
     "packages/ui/src/amicode/connections-tab.tsx": "06489a47bbd6d482ba4d2dc2cf4e9e8e9c648be774f78cd76e2abc87451116e5",
     "packages/ui/src/amicode/connections.stories.tsx": "fda54a41c4b46f5cab5278278f92c01d1fea70610f7b8641fa5855be6bd9d486",
     "packages/ui/src/amicode/connections.test.ts": "a718b1b698178087fdac5294c1661ca2eb200491e2a076465a09ab52c70b8910",
-    "packages/ui/src/amicode/connections.ts": "c44875ae2a95aae3f62a95fcf59517178039d09d51ca84e816ea725ba965e408",
+    "packages/ui/src/amicode/connections.ts": "89b6c99e991e1aa594768a6555f7f555782dd615c21132e6a688155431cc0dfd",
     "packages/ui/src/amicode/context-tree-data.test.ts": "bd51dc84d6c14c64f38c8f467ef29d9d8f45dcb77cc83ec92bffc8aaa983b463",
     "packages/ui/src/amicode/context-tree-data.ts": "d623578b957b9a49d6f7b930a2264b7bf0ea71fabf1a485d9666706c7b77485d",
     "packages/ui/src/amicode/context-tree-engine.test.ts": "afa3199c18c7ca05a19fdf0663a5b4d6e1fd2303e038cf25641c29e254e610f4",
@@ -612,7 +620,7 @@
     "packages/app/src/components/session/vscode-explorer-file-icon.tsx": "b5ba0cafe61594dd2afe45ef6e070e512861162933c85e9545db2ec697d50f17",
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "fa5d143cc101f3a3b9d5ad445edddc981e0d02783021d52dbfed6c8d8bf62498",
     "packages/app/src/components/settings-v2/data-storage.tsx": "a56b423b32c952c4379688d88d13a9f43b163a4169b9393f8c35b18a763a1180",
-    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "33445822be653d644eb49e3c463fc69db8dbf761513fe13397baa2f8e969a4c6",
+    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "afa7d83099db8066093a7fff73072ee0a03229384f4e8bf18d942f977276eec4",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.test.ts": "4d11815fe5acfa930bc418d0be82602f03821997300d0deef0aa2da2a743b3b0",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.ts": "561a75fa456b832d4af6f782c7ecf5269ce768fc2adc59c15a79197a2dde84c0",
     "packages/app/src/components/settings-v2/developer-tools-request-state.test.ts": "29711b3bc17fddbb8d046e104bc78e775a9ec7c5aa0ee2e181fbcd8b2b5e2135",
@@ -675,7 +683,7 @@
     "packages/core/src/v1/config/config.ts": "6eece12da68ac65a2c8b2fe19b1f2509f397cb63d004dca3998cf6dcc772293e",
     "packages/core/src/v1/config/migrate.ts": "6c960e1245db9a4bb830f0c1ebd6174e50570b4282d4ce5d7bff3333277abcf4",
     "packages/opencode/src/plugin/openai/codex.ts": "7f4342ee6a25eca6b66a47732a154449fbf318f6ce70ed446cf3e6788833954b",
-    "packages/opencode/src/server/amicode/connections.ts": "4498adc8a1ba0d81f92a2a23cc36641597b738bb0ac81d658bd21e10c35e39fc",
+    "packages/opencode/src/server/amicode/connections.ts": "dcfeeeddb380e11d8653c77e0dffa4ac3acabed4091f07f88b6ce0c7ae5772b3",
     "packages/opencode/src/server/amicode/credentials.ts": "f3a15c82496f9a3b6e8c1006a6a4ab419a02156e9a93a43c6c2319632c30063f",
     "packages/opencode/src/server/amicode/dashboard.ts": "031a4f40bfdc847984a1deecfefbe0fd27f42cbd1caf8823dc43c7eb5bcb9af0",
     "packages/opencode/src/server/amicode/file-resolve.ts": "3f0548fc97aad431d3f7707fd0b911e66fb4fd68ac4f643da71a2f00a73beffe",
@@ -810,19 +818,14 @@
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "85c200797fed41c0cd08e7aa699ce13aeb8a3d23aa2b9eddc4d72e72b8b5082c",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
-    "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c",
-    "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
-    "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
-    "packages/opencode/src/provider/transform.ts": "2ae62827a8190531a3244dc890a02297f8bd84bb90926dc1f685453c367e05de",
-    "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
-    "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
-    "packages/opencode/test/provider/transform.test.ts": "670656f51402d5c242856b3bd41cd15957065364d6cb724efd4f9cac0dda400e"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -836,147 +839,8 @@
     "packages/ui/src/v2/components/text-shimmer-v2.stories.tsx",
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
-  "exceptions": [
-    {
-      "path": "packages/app/src/components/posture-indicator-view.tsx",
-      "sha256": "1bd7903838926b21609c08460ff06683c6e0f378ae968e8b497de041d0f09bdd",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/components/posture-indicator.ts",
-      "sha256": "f546413e0e1f8296a7a444d1c07da724d67a160657888273110d06cb6789933d",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/components/settings-v2/subagent-routing.tsx",
-      "sha256": "9fe28325e0af15ae08aea3571b33bacc2aae7a07589d04928222466fc3ba06cc",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/components/subagent-routing.ts",
-      "sha256": "fa7775099009e162bfa53d3d05b08f4fc0f82b58f5164ecf419034c1e41a9890",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/context/global-sync/h1-client-boot.ts",
-      "sha256": "d1c3d5b17049413035ac17923a08c31f157fe20822871ecda798f8f883f3ff22",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/context/global-sync/session-currency.ts",
-      "sha256": "15ef51616b0cc3ff57a033de1c333d67e09280c6dcb744f4550d633618e2a9ee",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/context/global-sync/session-snapshot.ts",
-      "sha256": "e53df5cc501c6c4e94f65e350ad9bf7e0cf3ee7561b4cf3b06023e866bceda7e",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/context/global-sync/session-trim.ts",
-      "sha256": "e1466014f94d2c3cd3d2e494a7dad1bb54186e1ce88e407b9bb45325a45c7aa6",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/i18n/desktop-native.ts",
-      "sha256": "8fed66d36a0b6cdbf50e3a50f14b6f8ab3570e342e0905e5a926d7dc6c57f8fa",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/pages/home/fleet-sessions-view.tsx",
-      "sha256": "b0ee306085a7dba117da9930e2e3908f2dbbb3e5776e3a4d57e82c3f4de55d55",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/pages/home/fleet-sessions.ts",
-      "sha256": "e596d31f7fbec59f9d2f0a376d1bb3ad75744dc458073a5115a07e3ce3480389",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/pages/home/home-session-groups.ts",
-      "sha256": "881e5c86fd2f6bb8663aec6d618e183b5c4daabd64d48d7f88fe63ee6699aedc",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/pages/home/home-sessions.tsx",
-      "sha256": "0f011c6741e40a667913b7db743aec98c2e899ebf63fd8f1f5de870974996802",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/utils/boot-parity.ts",
-      "sha256": "5231be428fc832cd941aafbe70e4620b696321b87a2769d28372ecd2feb9dc41",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/utils/path-key.ts",
-      "sha256": "a8dc8e7799d27fe832aee95f83e6747673fce5dec0f571aaefefca0e31153b64",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/utils/session-list-conformance.ts",
-      "sha256": "39af003bae6159761ed5b0ab709fc1ab796194f8c0543dc80f29f3d49f1af4c3",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/app/src/utils/session-list-state.ts",
-      "sha256": "3c6ac47f3e73b14e6d5380c5d8500d0df330740e4652e6afac0547c86c9b9ea7",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/session-ui/src/components/session-diff.ts",
-      "sha256": "97f1ca7f80cb316c3fd2b228a8f8d4db3a6b78d155216148e0a3198c500ac6d7",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/session-ui/src/pierre/media.ts",
-      "sha256": "a4b1b3f622b623fde123b8a8009f9f55a01ed1da34b3425e94b39c884cbfa3ee",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/session-ui/src/pierre/selection-bridge.ts",
-      "sha256": "3517bdfc4ce387f9ebfe88a56c93040829e2c1ecbc3f9dfa990eebaa0c995b5e",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/ui/src/amicode/docket.ts",
-      "sha256": "d157d2a7a0a8e716c0520c135b24af7eff84841248a50f76e6e5f02f6a83b8f1",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/ui/src/components/amicode-docket.tsx",
-      "sha256": "060f2be2b0a91b38cc122f2a77baf9939a8eda19bae683c7814cfbf281ec9b3c",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
-      "path": "packages/ui/src/context/marked-parser.tsx",
-      "sha256": "cb72ef9e104111c316aa5b80fab01ba8688571cbce9ccadd9a9fb7ec0d98bbfd",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    }
-  ],
-  "extracted_at": "2026-09-14T05:04:46.530Z",
+  "exceptions": [],
+  "extracted_at": "2026-09-15T19:28:37.570Z",
   "per_package": {
     "packages/app": {
       "A": 164,
@@ -988,9 +852,14 @@
       "M": 36,
       "D": 0
     },
+    "packages/llm": {
+      "A": 0,
+      "M": 4,
+      "D": 0
+    },
     "packages/opencode": {
       "A": 68,
-      "M": 74,
+      "M": 80,
       "D": 0
     },
     "packages/schema": {
@@ -1015,7 +884,7 @@
     }
   },
   "counts": {
-    "overlay_total": 815,
+    "overlay_total": 818,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1054,6 +923,8 @@
     "packages/core/test/database-migration.test.ts": "M",
     "packages/core/test/location-mutation.test.ts": "M",
     "packages/core/test/tool-question.test.ts": "M",
+    "packages/llm/src/cache-policy.ts": "M",
+    "packages/llm/test/cache-policy.test.ts": "M",
     "packages/opencode/script/build.ts": "M",
     "packages/opencode/script/httpapi-exercise.ts": "M",
     "packages/opencode/test/amicode-release-workflow.test.ts": "A",
@@ -1268,13 +1139,17 @@
     "packages/core/test/filesystem/watcher.test.ts": "M",
     "packages/core/test/fixture/location.ts": "M",
     "packages/core/test/system-context/builtins.test.ts": "M",
+    "packages/llm/src/protocols/bedrock-converse.ts": "M",
+    "packages/llm/test/provider/bedrock-converse.test.ts": "M",
     "packages/opencode/src/agent/agent.ts": "M",
     "packages/opencode/src/mcp/browser.ts": "M",
+    "packages/opencode/src/mcp/index.ts": "M",
     "packages/opencode/src/project/instance-context.ts": "M",
     "packages/opencode/src/project/instance-store.ts": "M",
     "packages/opencode/src/provider/auth.ts": "M",
-    "packages/opencode/src/provider/error.ts": "A",
+    "packages/opencode/src/provider/error.ts": "M",
     "packages/opencode/src/provider/provider.ts": "M",
+    "packages/opencode/src/provider/transform.ts": "M",
     "packages/opencode/src/server/server.ts": "M",
     "packages/opencode/src/session/business-record.ts": "A",
     "packages/opencode/src/session/compaction.ts": "M",
@@ -1288,6 +1163,7 @@
     "packages/opencode/src/session/prose-guard.ts": "A",
     "packages/opencode/src/session/receipt-privacy.ts": "A",
     "packages/opencode/src/session/receipt.ts": "A",
+    "packages/opencode/src/session/reminders.ts": "M",
     "packages/opencode/src/session/rollout.ts": "A",
     "packages/opencode/src/session/session.ts": "M",
     "packages/opencode/src/session/summary.ts": "M",
@@ -1310,6 +1186,7 @@
     "packages/opencode/test/project/worktree-rename.test.ts": "A",
     "packages/opencode/test/provider/harmoniqs-no-tools.test.ts": "A",
     "packages/opencode/test/provider/provider.test.ts": "M",
+    "packages/opencode/test/provider/transform.test.ts": "M",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "A",
     "packages/opencode/test/server/amicode-connections.test.ts": "A",
     "packages/opencode/test/server/amicode-credentials.test.ts": "A",
@@ -1822,18 +1699,14 @@
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
-    "packages/opencode/src/session/reminders.ts": "M",
-    "packages/llm/src/cache-policy.ts": "M",
-    "packages/llm/src/protocols/bedrock-converse.ts": "M",
-    "packages/opencode/src/provider/transform.ts": "M",
-    "packages/llm/test/cache-policy.test.ts": "M",
-    "packages/llm/test/provider/bedrock-converse.test.ts": "M",
-    "packages/opencode/test/provider/transform.test.ts": "M"
-  }
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+  },
+  "upstream_base_archive_sha256": "6ae708a289bf8957f928e59ec5f3fc8a61e56290a9f12f47b916c9a26a517e9b"
 }

@@ -36,6 +36,7 @@
 // app-shelf-boot-proof CI lane runs the env-gated probe, which skips with the
 // reason printed until a dist is built there.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -206,17 +207,19 @@ if (verifiedMain) {
 }
 
 // ── overlay staleness check: re-materialize when the overlay has changed ─────
-// The manifest's overlay_sha + promoted_at identify the overlay version. A stamp
-// file inside .materialized records what was last materialized. When they
-// differ, the cached tree is stale — wipe it and re-materialize, otherwise the
-// build silently ships an old bundle (the startsWith-undefined-title trap,
-// 2026-09-13). The --direct-worktree and --verified-main modes skip this:
-// they manage their own trees.
+// The manifest's overlay_sha + promoted_at identify the extraction version, but
+// local edits to overlay files don't change those fields. For dev builds, we
+// also hash the manifest.files object (which refresh_manifest.mjs updates on
+// every overlay edit via the auto-refresh in materialize.mjs). When either the
+// extraction version OR the file hashes differ, the cached tree is stale.
 const OVERLAY_STAMP = join(work, ".overlay-stamp");
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(join(BUNDLE_PKG, "manifest.json"), "utf8"));
-    return `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    const base = `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    // Include a hash of the file-hashes so local overlay edits invalidate the cache
+    const filesHash = m.files ? createHash("sha256").update(JSON.stringify(m.files)).digest("hex").slice(0, 12) : "";
+    return `${base}:${filesHash}`;
   } catch { return null; }
 })();
 const cachedVersion = (() => {
@@ -245,6 +248,18 @@ if (!existsSync(join(work, "package.json"))) {
 }
 if (!existsSync(join(work, "packages", "app")))
   fail(`${work} has no packages/app — not a materialized app tree (pass --work to point at one)`);
+
+// ── clear stale vite build output ────────────────────────────────────────────
+// When build:binary runs first it materializes fresh source into the tree, but
+// a previous build:app's vite output (packages/app/dist) survives because the
+// staleness check only wipes when the STAMP differs — not on every run. Vite's
+// incremental cache can miss the changed source files (mtime race), so we
+// always clear the previous dist + vite cache before building. The 14s vite
+// build is cheap compared to shipping a stale UI.
+const appDist = join(work, "packages", "app", "dist");
+const viteCache = join(work, "packages", "app", "node_modules", ".vite");
+if (existsSync(appDist)) { rmSync(appDist, { recursive: true, force: true }); console.log("[build:app] cleared stale packages/app/dist"); }
+if (existsSync(viteCache)) { rmSync(viteCache, { recursive: true, force: true }); console.log("[build:app] cleared vite cache"); }
 
 const bun = spawnSync("which", ["bun"], { encoding: "utf8" });
 if (bun.status !== 0 || !bun.stdout.trim())
