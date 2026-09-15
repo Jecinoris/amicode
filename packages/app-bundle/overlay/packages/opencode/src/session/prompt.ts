@@ -636,8 +636,19 @@ const layer = Layer.effect(
     })
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
+      // amicode#1206: hoist the session fetch so the agent resolution can fall
+      // back to the SESSION's current agent before the global default_agent.
+      // Without this, callers that omit `agent` (the amicode_ask answer bridge,
+      // a widget prompt button) silently reset an active develop/research
+      // session to plan. The fallback chain is:
+      //   explicit input.agent → session's tracked agent → global default
+      // Fresh sessions (no tracked agent) still reach defaultInfo() as before.
+      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       const agentName = input.agent
-      const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
+      const sessionAgent = !agentName && current.agent ? yield* agents.get(current.agent) : undefined
+      const ag = agentName
+        ? yield* agents.get(agentName)
+        : sessionAgent ?? (yield* agents.defaultInfo())
       if (!ag) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
@@ -672,7 +683,7 @@ const layer = Layer.effect(
         format: input.format,
       }
 
-      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+      // `current` was hoisted above for the agent fallback (#1206)
       if (
         current.agent !== info.agent ||
         current.model?.providerID !== info.model.providerID ||
