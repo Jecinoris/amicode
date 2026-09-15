@@ -115,13 +115,14 @@ export function rebuildGitCommand(mode: RebuildMode): string | null {
 /**
  * The `build:app` step a rebuild runs, keyed on the button pressed (#1135
  * parity with scripts/rebuild_amicode.sh's build_amicode()). The #992 deploy
- * guard in build_app_bundle.mjs refuses (exit 1) whenever HEAD ≠ origin/main
- * or the working tree is dirty — so a plain `build:app` fails for the LOCAL
+ * guard in build_app_bundle.mjs refuses (exit 1) whenever HEAD ≠ the remote's
+ * default branch (#1196: origin/<default>, resolved from the remote) or the
+ * working tree is dirty — so a plain `build:app` fails for the LOCAL
  * button, which by design builds a feature branch / dirty working tree.
  *
  * `local` therefore passes `--direct-worktree` (skips the guard, stamps an
  * honest direct-worktree deploy.json) plus a recorded AMICODE_DEPLOY_OVERRIDE
- * reason; `main` has just synced to a clean origin/main, so it builds plain
+ * reason; `main` has just synced to a clean recorded trunk, so it builds plain
  * (guard active, no override). This mirrors the shell script's local-vs-main
  * divergence exactly, so the button and the script deploy identically.
  */
