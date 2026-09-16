@@ -308,10 +308,11 @@ jobs:
     # regressions merged unseen (this gate's first catch: the src/session/lineage.ts
     # SessionID predicate bug that was live on dev). This lane materializes the full
     # engine tree and runs the opencode package typecheck — the fork's typecheck.yml
-    # (`bun turbo typecheck`), scoped to the engine. New type errors fail CI; three
-    # known base-drift errors are allowlisted in the gate script and tracked in #1229.
-    # The unit-TEST lane (bun turbo test + test:httpapi + check:generated) is tracked
-    # in #1233 — blocked on real amicode test fixes (amicode-connections.test.ts).
+    # (`bun turbo typecheck`), scoped to the engine — plus the unit-test suite.
+    # New type errors fail CI; three known base-drift errors are allowlisted in the
+    # typecheck gate and tracked in #1229. The #1233 unit lane runs the fork-style
+    # shared-process suite but is non-blocking until #1239 hardens it. test:httpapi
+    # and check:generated remain follow-ups.
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -330,3 +331,9 @@ jobs:
         run: cd packages/app-bundle/.materialized && bun install --ignore-scripts
       - name: Engine typecheck gate (opencode) — new errors fail; base-drift (#1229) allowlisted
         run: bash packages/app-bundle/scripts/engine_typecheck_gate.sh
+      # Non-blocking until #1239 fixes suite pollution, timing flakiness, and
+      # positive cross-test dependencies. It still runs the overlay suite and
+      # reports the result on every PR; drop continue-on-error to promote it.
+      - name: Engine unit-test lane (opencode) — non-blocking (#1233, #1239)
+        continue-on-error: true
+        run: bash packages/app-bundle/scripts/engine_test_gate.sh
