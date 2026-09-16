@@ -37,6 +37,7 @@ import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
+import { SessionStreamVeil } from "@/components/session-stream-veil"
 import { ContextWarningBanner } from "@/components/session/context-warning-banner"
 import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
@@ -51,6 +52,7 @@ import { PromptProvider, usePrompt } from "@/context/prompt"
 import { usePlatform } from "@/context/platform"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
+import { createStreamGap } from "@/context/stream-gap"
 import { ServerConnection, serverName, useServer } from "@/context/server"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
@@ -374,6 +376,10 @@ export default function Page() {
   const language = useLanguage()
   const sdk = useSDK()
   const serverSDK = useServerSDK()
+  // amicode#1203 — the render response to the #638 stream machine: a loss after
+  // a first successful connect degrades the session view (veil + honest send
+  // refusal) instead of tearing it down. The machine's transitions are untouched.
+  const streamGap = createStreamGap(() => serverSDK().event.status())
   const settings = useSettings()
   const platform = usePlatform()
   const prompt = usePrompt()
@@ -2250,7 +2256,14 @@ export default function Page() {
 
   const sessionPanelContent = () => (
     <>
-      {sessionSync() ?? ""}
+      {/* amicode#1203 — the session resource's throwaway read used to suspend on
+          refetch and THROW when a refetch failed (tunnel blip + tab switch =
+          the reported blank session): the error boundary tore the whole session
+          view down. When the timeline is already rendered from cache, skip the
+          read — the cached view stays mounted and degrades via the veil
+          instead. A session with no cache yet still suspends/throws as before
+          (first open, and the session-deleted eviction path keeps working). */}
+      <Show when={!messagesReady()}>{sessionSync() ?? ""}</Show>
       <Show when={!isDesktop() && !!params.id && settings.general.newLayoutDesigns() && !mobileTabsBottom()}>
         {mobileTabs(true)}
       </Show>
@@ -2517,6 +2530,13 @@ export default function Page() {
               />
             </div>
           </Show>
+
+          {/* amicode#1203 — the reconnecting veil rides OVER the panel (a
+              sibling of the panel frames, OUTSIDE their error boundary) so a
+              torn render cannot take the indicator down with it: during the
+              stream gap the last rendered view is dimmed with a reconnecting
+              badge, and it re-renders in place on reconnect. */}
+          <SessionStreamVeil degraded={streamGap()} label={language.t("session.stream.reconnecting")} />
         </div>
 
         <Show when={!newSessionDesign() && desktopSidePanelOpen()}>
