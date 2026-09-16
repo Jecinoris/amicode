@@ -1,5 +1,16 @@
 # 0021 — The canary runs on always-on fleet arms, from CI's own artifacts — never on the daily driver
 
+Status: superseded (2026-09-16, see [ADR-0022](0022-retire-dev-branch.md)) — the
+`dev`/`main` branch model this record assumed is retired: `dev` regressed a
+shipped fix within 48 hours of this ADR (the wave-2 back-merge dropped the
+#1218 guard, silently, CI-green throughout) and was also the GitHub default
+branch, which caused PRs and Dependabot to silently target it instead of
+`main`. No canary implementation was ever built against it. The canary
+*concept* below — real fleet-state testing of an in-place upgrade, which CI's
+disposable runners cannot do — is kept and retargeted at `main` directly, per
+ADR-0022. The branch-specific details below (dev as integration branch, "the
+canary blesses the integration tip") are historical.
+
 With `dev` as the integration branch and `main` as the trunk Aaron has personally tested (2026-09-15), the mechanical pre-test of dev must happen continuously and on *real fleet state* — the thing CI's clean runners are structurally blind to (the 2026-09-15 session found three failure classes in one day, every one CI-green: entitlement-code drift, guard drift, projection clobbering). We decided the Canary is a fleet service: its orchestrator and server arm run on the hub, its client arm installs the prebuilt universal VSIX (darwin binary embedded) on the mini, and **Aaron's macbook is excluded by policy** — continuous machinery never mutates the daily driver (the week's three clobber mechanisms were all surprise-automation on that machine). The canary **downloads the dev-head's CI artifacts and never builds anything itself** — the invariant *canary = CI-green + real-fleet-state* — because a second build pipeline is exactly the drift class the fork absorption campaign retired.
 
 ## Considered Options
