@@ -209,6 +209,8 @@ function normalizeMessages(
         //   2. Convert reasoning that HAS text but NO bedrock signature to a
         //      text part — the thinking content is preserved and the SDK
         //      adapter will not silently empty the message.
+        // (ported from main 568306f8 during the wave-2 merge — dev's overlay
+        //  syncs predate the fix)
         const filtered = msg.content
           .map((part) => {
             if (part.type === "text") {
@@ -554,13 +556,6 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
       return { ...options, [key]: metadata }
     })
   }
-
-  // Final guard: no provider accepts a message with an empty content array.
-  // Provider-specific filters above (Anthropic, Bedrock) catch most cases, but
-  // edge cases slip through — e.g. reasoning-only turns whose parts are all
-  // stripped, or cross-provider history replay. Drop them here so no downstream
-  // SDK or API sees content: [].
-  msgs = msgs.filter((msg) => !Array.isArray(msg.content) || msg.content.length > 0)
 
   return msgs
 }
