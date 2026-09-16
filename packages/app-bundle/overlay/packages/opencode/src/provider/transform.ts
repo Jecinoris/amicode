@@ -201,19 +201,32 @@ function normalizeMessages(
           return msg
         }
         if (!Array.isArray(msg.content)) return msg
-        const filtered = msg.content.filter((part) => {
-          if (part.type === "text") {
-            return part.text !== ""
-          }
-          if (part.type === "reasoning") {
-            return (
-              part.text.trim().length > 0 ||
-              part.providerOptions?.bedrock?.signature != null ||
-              part.providerOptions?.bedrock?.redactedData != null
-            )
-          }
-          return true
-        })
+        // The @ai-sdk/amazon-bedrock adapter silently drops reasoning parts
+        // that lack a bedrock signature or redactedData (the Converse API
+        // requires them). A message whose only surviving content was such
+        // reasoning arrives at the API with content: []. To prevent this:
+        //   1. Drop empty text and truly empty reasoning (no text, no sig).
+        //   2. Convert reasoning that HAS text but NO bedrock signature to a
+        //      text part — the thinking content is preserved and the SDK
+        //      adapter will not silently empty the message.
+        const filtered = msg.content
+          .map((part) => {
+            if (part.type === "text") {
+              return part.text !== "" ? part : undefined
+            }
+            if (part.type === "reasoning") {
+              const hasSig = part.providerOptions?.bedrock?.signature != null
+              const hasRedacted = part.providerOptions?.bedrock?.redactedData != null
+              if (hasSig || hasRedacted) return part
+              // Reasoning with text but no bedrock signature — the SDK adapter
+              // would drop this silently. Convert to text to preserve content.
+              if (part.text.trim().length > 0) return { type: "text" as const, text: part.text }
+              // Empty reasoning with no signature — drop
+              return undefined
+            }
+            return part
+          })
+          .filter((part): part is NonNullable<typeof part> => part !== undefined)
         if (filtered.length === 0) return undefined
         return { ...msg, content: filtered }
       })
@@ -541,6 +554,13 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
       return { ...options, [key]: metadata }
     })
   }
+
+  // Final guard: no provider accepts a message with an empty content array.
+  // Provider-specific filters above (Anthropic, Bedrock) catch most cases, but
+  // edge cases slip through — e.g. reasoning-only turns whose parts are all
+  // stripped, or cross-provider history replay. Drop them here so no downstream
+  // SDK or API sees content: [].
+  msgs = msgs.filter((msg) => !Array.isArray(msg.content) || msg.content.length > 0)
 
   return msgs
 }
