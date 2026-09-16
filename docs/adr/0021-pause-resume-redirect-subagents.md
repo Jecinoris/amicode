@@ -15,7 +15,7 @@ to a safe, resumable stopping point.
 
 *Pause* deliberately interrupts a Session's in-flight turn by reusing the
 existing cancel path (fiber interruption, dangling-tool-call reconciliation in
-`message-v2.ts`) but settles the Session to a new **Paused** state rather than
+`overlay/packages/opencode/src/session/message-v2.ts`) but settles the Session to a new **Paused** state rather than
 idle or done. The Paused state is durable: it is stored in the Session's
 metadata JSON column (the same column that already holds `spawned_by` and
 `spawned_depth`), so it survives an engine restart and needs no schema
@@ -46,18 +46,28 @@ graph, or headless resume-on-boot.
 
 **The load-bearing edge case: foreground subagents.** Today, both the `error`
 and `cancelled` outcomes in the Task tool's background-job result handler
-(`task.ts:324-330`) trigger `Effect.fail`, which fails the parent's turn. A
+(`overlay/packages/opencode/src/tool/task.ts`, the `Effect.fail` trap) trigger
+`Effect.fail`, which fails the parent's turn. A
 Paused child must NOT fail the parent. Slice 1a introduces a parallel
 background-job outcome path that settles to `paused` instead of `cancelled`,
 and the Task tool gains a `paused` branch returning a resumable sentinel
 distinct from completed, error, and cancelled. This is the single trickiest
 behavior — the one most likely to bite — and is the critical path for slice 1.
+*(Resolved in #1221: the paused branch lands at `task.ts:331-351`, keying off a
+`cancelled` job outcome plus the durable `{paused,resumable}` metadata marker.)*
 
 **Cross-boundary dependency.** Three primitives live in the pinned upstream
 engine base, not in the overlay: `SessionStatus` (the in-memory status map),
 `BackgroundJob.Status` (the job outcome union), and the session persistence
-schema (`SessionTable`). The implementation must either create overlay files
-that shadow them or coordinate a base change. The durable marker uses the
+schema (`SessionTable`) — none of these files exist under
+`packages/app-bundle/overlay/packages/opencode/src/` (`background-job.ts` and
+`session/status.ts` are upstream-only). The implementation must either create
+overlay files that shadow them or coordinate a base change. *(Resolved in #1221:
+a third path — neither shadow nor base change. The Paused fact lives entirely in
+the session metadata JSON column via a new overlay `session/pause.ts` service, so
+none of the three upstream types is forked. Pause/Resume endpoints are added under
+`overlay/.../server/routes/instance/httpapi/{groups,handlers}/experimental.ts` —
+there is no `handler/` directory.)* The durable marker uses the
 session metadata JSON column — already present, already used — to avoid a
 database schema migration.
 
