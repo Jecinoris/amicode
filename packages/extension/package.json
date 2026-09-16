@@ -303,6 +303,21 @@
           "default": 0,
           "description": "Fleet posture tuning (D6): consecutive healthy responses required to re-enter fleet mode (hysteresis — flapping cannot flap the posture). 0 = the default (3)."
         },
+        "amicode.fleetTunnelDownConsecutiveFailures": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes (1.5s timeout each, 2s poll) required before fleetReady flips off and the status bar drops. Hysteresis — a single lost probe must never flip the status bar. 0 = the default (15, ≈30s)."
+        },
+        "amicode.fleetStandaloneOfferConsecutiveFailures": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes required before the 'Go Standalone?' popup fires — a SUSTAINED outage, once per outage. 0 = the default (150, ≈5 minutes)."
+        },
+        "amicode.fleetStandaloneOfferCooldownMinutes": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet client poll tuning (#1202): after a standalone offer, no new offer within this many minutes — the cooldown survives a recovery, so a flapping tunnel cannot extract repeated popups. 0 = the default (15 minutes)."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,
