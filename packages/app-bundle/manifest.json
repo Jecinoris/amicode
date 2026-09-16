@@ -313,8 +313,8 @@
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "63e47f9a6f5d5f0e69ae35068ccc416aff8771667c7aa26ee456d6d8c0994399",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
     "packages/opencode/test/provider/transform.test.ts": "ecf9dd1bdec36c2126f3140d43125728c06211b9771d47619ff65f7453ff37fd",
-    "packages/opencode/test/server/amicode-connections-routes.test.ts": "2852289427fadaf6133b556af02f7e7b369b2a4df53ababc39531fe85bcc9d17",
-    "packages/opencode/test/server/amicode-connections.test.ts": "0d916321a42e321d44e0db13a6966985deaf77cea48470d11eb8b434a464b7cd",
+    "packages/opencode/test/server/amicode-connections-routes.test.ts": "de8ddeaabe23e20a0dc33eef6c70232ba20cca0301cbea08fe9fd751a07d6649",
+    "packages/opencode/test/server/amicode-connections.test.ts": "dfe3dc70044ef2d6bf90dd494480439cb945d330d241fb3501a3e43bf6341967",
     "packages/opencode/test/server/amicode-credentials.test.ts": "ba77d064fd2be799930524510ce6e32c6f6a0d144d3cdf41673a8283dbe95bf6",
     "packages/opencode/test/server/amicode-dashboard.test.ts": "e25b284b9eb434da7f07dfa8b72b7919a0cd1ffaed275a6725d9cd44cd1298c0",
     "packages/opencode/test/server/amicode-file-resolve.test.ts": "39db84780125c8fd4551137e4f6a0ea6b0a9dce45b04e26ed15f649efe251311",
@@ -349,7 +349,7 @@
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
     "packages/opencode/test/session/receipt-privacy.test.ts": "6c8777edc280a061fec1a4d16e2504aec18bdf9cd6dd2cedc7a09ef8fc6c2ca0",
     "packages/opencode/test/session/rollout.test.ts": "3153fad45639db647d98d7fd96b3b5c2f0d938fca3a40598a4f88b8f62dda397",
-    "packages/opencode/test/session/session.test.ts": "2ba4b3f9ba6ec929fd7dcbdcde3a0134bf2e6283310b207e61f719443adb649c",
+    "packages/opencode/test/session/session.test.ts": "c182f3e5311324175c9ba44a7164737a75ee6d2f22e4a024d66518b5ae91f5f2",
     "packages/opencode/test/session/turn-output.test.ts": "3e92f545d10054e501ad2c8857b43719f5a8f768065643d343c0c37c2e6fb60c",
     "packages/opencode/test/session/user-mutation.test.ts": "d06d6646cbf3b9796931660fd23292c450f8083c438ef78f4d6d01d75f575454",
     "packages/opencode/test/share/share-next.test.ts": "d94076118b558644c06de3ef315041a6fd8895098377da843e98530311e9e609",
@@ -848,7 +848,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-16T18:48:55.500Z",
+  "extracted_at": "2026-09-16T19:08:15.517Z",
   "per_package": {
     "packages/app": {
       "A": 172,
