@@ -2424,8 +2424,8 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
 
     expect(result).toHaveLength(1)
     expect(result[0].content).toHaveLength(2)
-    expect(result[0].content[0].type).toBe("reasoning")
-    expect(result[0].content[1].type).toBe("text")
+    expect((result[0].content[0] as any).type).toBe("reasoning")
+    expect((result[0].content[1] as any).type).toBe("text")
   })
 
   test("drops bedrock reasoning-only message when text is empty and no signature", () => {
