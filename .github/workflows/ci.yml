@@ -1,6 +1,6 @@
 name: ci
 on:
-  push: { branches: [main, dev] }   # dev: the canary blesses the integration tip (CI-green at the exact SHA) — the canary cannot run without it
+  push: { branches: [main] }
   pull_request:
 jobs:
   # ── Build the opencode binary from the materialized overlay tree ───────────
