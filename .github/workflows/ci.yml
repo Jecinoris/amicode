@@ -300,3 +300,33 @@ jobs:
       - name: Restore binary permissions
         run: chmod +x packages/extension/vendor/opencode/*/opencode
       - run: pnpm --filter amicode test:smoke
+  engine-tests:
+    # #1228: restore engine typecheck coverage the fork-absorption (#1114) dropped.
+    # The overlay engine (packages/app-bundle/overlay/packages/opencode) is NOT a
+    # pnpm workspace member (pnpm-workspace.yaml globs packages/* non-recursively),
+    # so the `fast` job's `pnpm -r run typecheck` skips it entirely — engine type
+    # regressions merged unseen (this gate's first catch: the src/session/lineage.ts
+    # SessionID predicate bug that was live on dev). This lane materializes the full
+    # engine tree and runs the opencode package typecheck — the fork's typecheck.yml
+    # (`bun turbo typecheck`), scoped to the engine. New type errors fail CI; three
+    # known base-drift errors are allowlisted in the gate script and tracked in #1229.
+    # The unit-TEST lane (bun turbo test + test:httpapi + check:generated) is tracked
+    # in #1233 — blocked on real amicode test fixes (amicode-connections.test.ts).
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install --frozen-lockfile
+      - name: Materialize the full engine tree (canonical base + overlay)
+        run: pnpm --filter @amicode/app-bundle run materialize
+      - name: bun install (materialized tree deps)
+        run: cd packages/app-bundle/.materialized && bun install --ignore-scripts
+      - name: Engine typecheck gate (opencode) — new errors fail; base-drift (#1229) allowlisted
+        run: bash packages/app-bundle/scripts/engine_typecheck_gate.sh
