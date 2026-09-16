@@ -22,7 +22,8 @@ if [ ! -d "$MAT/packages/opencode" ]; then
   exit 1
 fi
 
-OUT="$(cd "$MAT/packages/opencode" && bun run typecheck 2>&1)"
+TYPECHECK_STATUS=0
+OUT="$(cd "$MAT/packages/opencode" && bun run typecheck 2>&1)" || TYPECHECK_STATUS=$?
 echo "$OUT"
 
 # Fail-closed: the typecheck must actually have executed (tsgo prints its banner
@@ -37,7 +38,13 @@ fi
 # bumps the base pin.
 ALLOW='test/server/httpapi-mcp-oauth\.test\.ts.*error TS2322|test/session/llm-native-recorded\.test\.ts.*error TS2339|test/session/snapshot-tool-race\.test\.ts.*error TS2741'
 
-UNEXPECTED="$(echo "$OUT" | grep -E 'error TS' | grep -vE "$ALLOW" || true)"
+TYPECHECK_ERRORS="$(echo "$OUT" | grep -E 'error TS' || true)"
+if [ "$TYPECHECK_STATUS" -ne 0 ] && [ -z "$TYPECHECK_ERRORS" ]; then
+  echo "::error::engine typecheck command failed without TypeScript diagnostics"
+  exit 1
+fi
+
+UNEXPECTED="$(echo "$TYPECHECK_ERRORS" | grep -vE "$ALLOW" || true)"
 if [ -n "$UNEXPECTED" ]; then
   echo "::error::engine typecheck found type error(s) NOT in the #1229 base-drift allowlist:"
   echo "$UNEXPECTED"

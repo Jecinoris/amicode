@@ -312,9 +312,13 @@ jobs:
     # known base-drift errors are allowlisted in the gate script and tracked in #1229.
     # The unit-TEST lane (bun turbo test + test:httpapi + check:generated) is tracked
     # in #1233 — blocked on real amicode test fixes (amicode-connections.test.ts).
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
