@@ -47,4 +47,15 @@ describe("SessionStreamVeil — projection contract (#1203)", () => {
     expect(code).toContain("var(--v2-state-fg-warning")
     expect(code).toContain("var(--v2-border-border-base")
   })
+
+  test("caller passes the streamGap ACCESSOR, not its value (#1203 regression)", () => {
+    // props.degraded is Accessor<boolean> — the veil calls props.degraded()
+    // internally. Passing degraded={streamGap()} (the value) makes that call
+    // throw `t.degraded is not a function` and blanks the whole session view.
+    // Must be degraded={streamGap}.
+    const callSite = readFileSync(join(import.meta.dir, "..", "pages", "session.tsx"), "utf8")
+    const m = callSite.match(/<SessionStreamVeil\s+degraded=\{([^}]*)\}/)
+    expect(m).not.toBeNull()
+    expect(m![1].trim()).toBe("streamGap")
+  })
 })
