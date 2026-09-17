@@ -41,6 +41,10 @@ function getExtension(path: string): string {
 
 type FileCategory = "markdown" | "image" | "pdf" | "text"
 
+const LATEX_EXTENSIONS = [".tex", ".ltx"] as const
+const isLatexFile = (path: string) => LATEX_EXTENSIONS.some((ext) => path.toLowerCase().endsWith(ext))
+const companionPdfPath = (texPath: string) => texPath.replace(/\.[^.]+$/, ".pdf")
+
 /**
  * Sync, extension-based file classification (phase 1).
  * Extensionless files (Makefile, Dockerfile, LICENSE) → "text".
@@ -154,12 +158,40 @@ export function PreviewFileView(props: {
             setFileType("error")
             setFileContent("")
           })
-          .finally(() => {
+           .finally(() => {
             setLoading(false)
           })
       },
     ),
   )
+
+  // ─── PDF auto-reload on companion file change (#1254) ─────────────────
+  // When this is a .pdf file, subscribe to watcher events and re-read when
+  // the file changes on disk (e.g. after latexmk finishes compiling).
+  createEffect(() => {
+    const filePath = props.filePath
+    if (getFileCategory(filePath) !== "pdf") return
+    const unsub = sdk().event.listen((e) => {
+      if (e.details.type !== "file.watcher.updated") return
+      const props_ = e.details.properties as Record<string, unknown> | undefined
+      const changedPath = typeof props_?.file === "string" ? props_.file : undefined
+      if (!changedPath || !changedPath.endsWith(filePath)) return
+      // Re-read the PDF
+      sdk()
+        .client.file.read({ path: filePath })
+        .then((result) => {
+          const content = result.data
+          if (content && content.type !== "text" && (content as any).encoding === "base64") {
+            setBinaryData({
+              base64: content.content,
+              mime: (content as any).mimeType ?? "application/pdf",
+            })
+          }
+        })
+        .catch(() => {})
+    })
+    onCleanup(unsub)
+  })
 
   // ─── Binary URLs ───────────────────────────────────────────────────────
 
@@ -190,6 +222,10 @@ export function PreviewFileView(props: {
       if (closeAfterSave) props.onSaveComplete?.()
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+      // Trigger LaTeX compilation after saving a .tex file (#1253)
+      if (isLatexFile(filePath) && window.parent !== window) {
+        window.parent.postMessage({ source: "amicode", kind: "run-latex", file: filePath }, "*")
+      }
     } catch {
       setSaveStatus("idle")
     }
@@ -219,13 +255,6 @@ export function PreviewFileView(props: {
 
   onCleanup(() => {
     if (savedTimer) clearTimeout(savedTimer)
-    // Auto-save unsaved edits on teardown (session tab switch remounts the
-    // entire preview panel, destroying local state). Better to write to disk
-    // than to lose the user's work.
-    const pending = unsavedContent()
-    if (pending !== null) {
-      void serverSDK().client.file.write({ path: props.filePath, content: pending }).catch(() => {})
-    }
   })
 
   // ─── Render ────────────────────────────────────────────────────────────

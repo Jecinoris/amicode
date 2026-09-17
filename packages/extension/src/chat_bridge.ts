@@ -399,6 +399,35 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // LaTeX compile: the preview editor sends this after saving a .tex file.
+  // Runs latexmk in the file's directory and reports success/failure. (#1253)
+  if (msg.kind === "run-latex") {
+    const rawFile = typeof (msg as { file?: unknown }).file === "string" ? (msg as { file: string }).file : "";
+    const tab = (msg as { tab?: string }).tab;
+    if (!rawFile || !/\.(tex|ltx)$/i.test(rawFile)) return true;
+    // Resolve relative paths against the workspace root
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    const file = path.isAbsolute(rawFile) ? rawFile : path.join(wsRoot, rawFile);
+    const dir = path.dirname(file);
+    const base = path.basename(file);
+    console.log("[run-latex]", { rawFile, wsRoot, file, dir, base });
+    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, state: "compiling" });
+    const { exec } = require("node:child_process") as typeof import("node:child_process");
+    exec(
+      `latexmk -pdf -interaction=nonstopmode "${base}"`,
+      { cwd: dir, timeout: 120_000 },
+      (err, _stdout, stderr) => {
+        console.log("[run-latex] done", { err: !!err, stderr: stderr?.slice(0, 200) });
+        io.postToWebview({
+          source: "amicode", kind: "run-latex-status", tab,
+          state: err ? "error" : "done",
+          error: err ? (stderr?.trim().slice(0, 500) || err.message) : undefined,
+        });
+      },
+    );
+    return true;
+  }
+
   // The "Amico" palette group — allowlisted commands only.
   if (msg.kind === "command") {
     const command = (msg as unknown as { command?: unknown }).command;
