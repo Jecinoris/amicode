@@ -200,7 +200,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
 
         <div class="flex h-11 items-center px-2">
           <div
-            class="flex min-w-0 flex-1 items-center gap-1"
+            class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
             aria-hidden={state.mode === "shell"}
             inert={state.mode === "shell" ? true : undefined}
             style={buttons()}
@@ -250,6 +250,15 @@ export function PromptInputV2(props: PromptInputV2Props) {
                     control={control}
                   />
                 </Show>
+              )}
+            </Show>
+            <Show when={view.verbosity} keyed>
+              {(control) => (
+                <PromptInputV2ConfiguredSelect
+                  title="Verbosity"
+                  keybind={["Shift", "Mod", "V"]}
+                  control={control}
+                />
               )}
             </Show>
           </div>

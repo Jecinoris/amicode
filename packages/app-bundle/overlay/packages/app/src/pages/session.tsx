@@ -1102,6 +1102,46 @@ export default function Page() {
   let scroller: HTMLDivElement | undefined
   let content: HTMLDivElement | undefined
   let revealMessage = (_id: string) => {}
+
+  // Per-session composer caret memory. The composer persists across tab
+  // switches (non-keyed), so we save the caret character-offset for the
+  // outgoing session and restore it when the user returns. Keyed by session id.
+  const caretOffsets = new Map<string, number>()
+  const readCaretOffset = (el: HTMLElement): number | undefined => {
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return undefined
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return undefined
+    const pre = range.cloneRange()
+    pre.selectNodeContents(el)
+    pre.setEnd(range.startContainer, range.startOffset)
+    return pre.toString().length
+  }
+  const applyCaretOffset = (el: HTMLElement, offset: number) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let remaining = offset
+    let node = walker.nextNode()
+    while (node) {
+      const len = node.textContent?.length ?? 0
+      if (remaining <= len) {
+        const range = document.createRange()
+        range.setStart(node, remaining)
+        range.collapse(true)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        return
+      }
+      remaining -= len
+      node = walker.nextNode()
+    }
+    // Offset past the end (or no text nodes) → place at the end.
+    const sel = window.getSelection()
+    if (sel) {
+      sel.selectAllChildren(el)
+      sel.collapseToEnd()
+    }
+  }
   let scrollToEnd = () => {}
   let scrollMark = 0
   let messageMark = 0
@@ -2174,14 +2214,54 @@ export default function Page() {
   createEffect(
     on(
       () => params.id,
-      (id) => {
-        if (!id) requestAnimationFrame(() => inputRef?.focus())
+      (id, previous) => {
+        if (!id) {
+          requestAnimationFrame(() => inputRef?.focus())
+          return
+        }
+        // Restore composer focus + caret on tab switch. The composer persists
+        // across switches (non-keyed), so after clicking a tab the focus sits
+        // on the tab button and the caret isn't repainted. Refocus and re-set
+        // the selection UNLESS the user is actively editing another text field
+        // (preview editor, sidebar search) — a plain button/tab is fair game.
+        if (previous && id !== previous) {
+          setTimeout(() => {
+            if (!inputRef) return
+            const active = document.activeElement as HTMLElement | null
+            const editingElsewhere =
+              !!active &&
+              active !== inputRef &&
+              (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
+            if (editingElsewhere) return
+            inputRef.focus()
+            // Restore the saved caret offset for this session; if none, end.
+            const saved = caretOffsets.get(id)
+            if (saved !== undefined) {
+              applyCaretOffset(inputRef, saved)
+            } else {
+              const sel = window.getSelection()
+              if (sel) {
+                sel.selectAllChildren(inputRef)
+                sel.collapseToEnd()
+              }
+            }
+          }, 0)
+        }
       },
     ),
   )
 
   onMount(() => {
     makeEventListener(document, "keydown", handleKeyDown)
+    // Continuously record the composer caret offset for the current session so
+    // returning to a tab restores it (the composer content swaps per session).
+    makeEventListener(document, "selectionchange", () => {
+      const id = params.id
+      if (!id || !inputRef) return
+      if (document.activeElement !== inputRef) return
+      const offset = readCaretOffset(inputRef)
+      if (offset !== undefined) caretOffsets.set(id, offset)
+    })
   })
 
   // Register the session copy provider so Cmd+A → Cmd+C copies the full

@@ -62,6 +62,13 @@ export const useComposerCommands = (input: { model?: ModelSelection } = {}) => {
       keybind: "shift+mod+d",
       onSelect: () => model.variant.cycle(),
     }),
+    modelCommand({
+      id: "model.verbosity.cycle",
+      title: language.t("command.model.verbosity.cycle"),
+      description: language.t("command.model.verbosity.cycle.description"),
+      keybind: "shift+mod+v",
+      onSelect: () => model.verbosity?.cycle(),
+    }),
     agentCommand({
       id: "agent.cycle",
       title: language.t("command.agent.cycle"),

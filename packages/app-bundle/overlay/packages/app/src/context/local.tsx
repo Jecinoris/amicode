@@ -380,6 +380,21 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           )
         },
       },
+      verbosity: {
+        current() {
+          return models.verbosity.get() ?? "medium"
+        },
+        options: ["terse", "medium", "detailed"] as const,
+        set(value: string) {
+          models.verbosity.set(value === "medium" ? undefined : value)
+        },
+        cycle() {
+          const items = this.options
+          const idx = items.indexOf(this.current() as typeof items[number])
+          const next = items[(idx + 1) % items.length]
+          this.set(next)
+        },
+      },
     }
 
     const result = {

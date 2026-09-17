@@ -23,7 +23,7 @@ type CompatibleSessionApi = Omit<
   "prompt" | "command" | "shell" | "compact" | "rename" | "archive" | "remove"
 > & {
   prompt: (input: SessionPromptInput & LegacyPrompt) => Promise<SessionPromptOutput>
-  command: (input: SessionCommandInput) => Promise<SessionCommandOutput>
+  command: (input: SessionCommandInput & Pick<LegacyPrompt, "verbosity">) => Promise<SessionCommandOutput>
   shell: (input: SessionShellInput & LegacyPrompt) => Promise<SessionShellOutput>
   compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
   rename: (input: Parameters<SessionApi["rename"]>[0] & LegacyLocation) => ReturnType<SessionApi["rename"]>
@@ -44,6 +44,7 @@ type LegacyPrompt = {
   agent?: string
   model?: { providerID: string; modelID: string }
   variant?: string
+  verbosity?: string
   legacyParts?: (TextPartInput | FilePartInput | AgentPartInput)[]
 }
 type LegacyLocation = { directory?: string }
@@ -218,6 +219,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           agent: value.agent,
           model: value.model,
           variant: value.variant,
+          ...(value.verbosity ? { verbosity: value.verbosity } : {}),
           parts: value.legacyParts ?? [
             { type: "text", text: value.text },
             ...(value.files ?? []).map((file) => ({
@@ -252,7 +254,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           delivery: value.delivery ?? "steer",
         }
       },
-      async command(value: SessionCommandInput) {
+      async command(value: SessionCommandInput & Pick<LegacyPrompt, "verbosity">) {
         await legacy().session.command({
           sessionID: value.sessionID,
           messageID: value.id ?? undefined,
@@ -261,6 +263,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           agent: value.agent ?? undefined,
           model: value.model ? `${value.model.providerID}/${value.model.id}` : undefined,
           variant: value.model?.variant,
+          ...(value.verbosity ? { verbosity: value.verbosity } : {}),
           parts: value.files?.map((file) => ({
             type: "file" as const,
             mime: mime(file.uri),

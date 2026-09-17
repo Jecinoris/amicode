@@ -73,6 +73,8 @@ export const dict = {
   "command.agent.cycle.reverse.description": "Switch to the previous agent",
   "command.model.variant.cycle": "Cycle thinking effort",
   "command.model.variant.cycle.description": "Switch to the next effort level",
+  "command.model.verbosity.cycle": "Cycle verbosity",
+  "command.model.verbosity.cycle.description": "Switch between standard, terse, and detailed output",
   "command.prompt.mode.shell": "Shell",
   "command.prompt.mode.normal": "Prompt",
   "command.permissions.autoaccept.enable": "Auto-accept permissions",
@@ -1015,6 +1017,12 @@ export const dict = {
   "settings.general.row.developerMode.title": "Use developer build",
   "settings.general.row.developerMode.description":
     "Switch between the release and a local developer build of the opencode server and Amicode extension",
+  "settings.general.row.opencodePath.title": "opencode repo path",
+  "settings.general.row.opencodePath.description":
+    "Path to your local opencode repository root (the binary is resolved from here)",
+  "settings.general.row.opencodePath.placeholder": "~/harmoniqs/opencode",
+  "settings.general.row.opencodePath.error.notFound": "Binary not found at this path",
+  "settings.general.row.opencodePath.error.notExecutable": "Binary exists but is not executable",
   "settings.general.row.amicodePath.title": "Amicode repo path",
   "settings.general.row.amicodePath.description":
     "Path to your local Amicode repository root (rebuilds extension and reloads on change)",

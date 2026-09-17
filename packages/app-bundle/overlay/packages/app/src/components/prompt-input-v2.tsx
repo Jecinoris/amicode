@@ -420,6 +420,16 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         onSelect: (value) => props.controls.model.selection.variant.set(value === "default" ? undefined : value),
         keybind: () => command.keybindParts("model.variant.cycle"),
       },
+      verbosity: {
+        options: () => [
+          { id: "terse", label: "terse" },
+          { id: "medium", label: "medium" },
+          { id: "detailed", label: "detailed" },
+        ],
+        current: () => props.controls.model.selection.verbosity?.current() ?? "medium",
+        onSelect: (value: string) => props.controls.model.selection.verbosity?.set(value),
+        keybind: () => command.keybindParts("model.verbosity.cycle"),
+      },
       submit: {
         stopping,
         working,

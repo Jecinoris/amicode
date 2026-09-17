@@ -14,6 +14,7 @@ type Store = {
   user: User[]
   recent: ModelKey[]
   variant?: Record<string, string | undefined>
+  verbosity?: string
   /** amicode: durable default-model pin; optional so persisted model.v1 stores predate it */
   pinned?: ModelKey
 }
@@ -180,6 +181,10 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       variant: {
         get: getVariant,
         set: setVariant,
+      },
+      verbosity: {
+        get: () => store.verbosity,
+        set: (value: string | undefined) => setStore("verbosity", value),
       },
     }
   },

@@ -58,6 +58,7 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { resolveVerbositySystem } from "./llm/verbosity"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -636,19 +637,8 @@ const layer = Layer.effect(
     })
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
-      // amicode#1206: hoist the session fetch so the agent resolution can fall
-      // back to the SESSION's current agent before the global default_agent.
-      // Without this, callers that omit `agent` (the amicode_ask answer bridge,
-      // a widget prompt button) silently reset an active develop/research
-      // session to plan. The fallback chain is:
-      //   explicit input.agent → session's tracked agent → global default
-      // Fresh sessions (no tracked agent) still reach defaultInfo() as before.
-      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       const agentName = input.agent
-      const sessionAgent = !agentName && current.agent ? yield* agents.get(current.agent) : undefined
-      const ag = agentName
-        ? yield* agents.get(agentName)
-        : sessionAgent ?? (yield* agents.defaultInfo())
+      const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
       if (!ag) {
         const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
@@ -667,6 +657,15 @@ const layer = Layer.effect(
           : undefined
       const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
 
+      const verbosityLevel = input.verbosity
+      const verbositySystem = resolveVerbositySystem(verbosityLevel)
+      const userSystem = [
+        input.system,
+        // Tag the level so request.ts can read it for the mid-conversation reminder
+        verbosityLevel && verbosityLevel !== "medium" ? `[verbosity:${verbosityLevel}]` : undefined,
+        verbositySystem,
+      ].filter(Boolean).join("\n") || undefined
+
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),
         role: "user",
@@ -679,11 +678,11 @@ const layer = Layer.effect(
           modelID: model.modelID,
           variant,
         },
-        system: input.system,
+        system: userSystem,
         format: input.format,
       }
 
-      // `current` was hoisted above for the agent fallback (#1206)
+      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       if (
         current.agent !== info.agent ||
         current.model?.providerID !== info.model.providerID ||
@@ -1451,14 +1450,11 @@ const layer = Layer.effect(
               system,
               messages: [
                 ...modelMsgs,
-                // Use a user message (not assistant prefill) so providers that
-                // reject trailing assistant messages (e.g. Bedrock Converse)
-                // still receive the max-steps instruction.
-                ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : []),
+                ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),
               ],
               tools,
               model,
-              toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,
+              toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
 
             if (structured !== undefined) {
@@ -1710,6 +1706,7 @@ export const PromptInput = Schema.Struct({
   format: Schema.optional(SessionV1.Format),
   system: Schema.optional(Schema.String),
   variant: Schema.optional(Schema.String),
+  verbosity: Schema.optional(Schema.String),
   parts: Schema.Array(
     Schema.Union([
       SessionV1.TextPartInput,
@@ -1743,6 +1740,7 @@ export const CommandInput = Schema.Struct({
   arguments: Schema.String,
   command: Schema.String,
   variant: Schema.optional(Schema.String),
+  verbosity: Schema.optional(Schema.String),
   // Inlined (no identifier annotation) to keep the original SDK output — the
   // PromptInput call site below references FilePartInput by ref via the
   // Schema export in message-v2.ts.

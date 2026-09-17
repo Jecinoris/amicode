@@ -24,6 +24,10 @@ import {
   externalUpdate,
 } from "./editor-core"
 
+// Per-file editor state cache so returning to a file after a tab switch
+// restores scroll position and cursor, not the top.
+const editorStateCache = new Map<string, { scroll: number; cursor: number }>()
+
 export function PreviewEditor(props: {
   content: string
   filePath: string
@@ -105,6 +109,42 @@ export function PreviewEditor(props: {
     // Fill the container
     editorView.dom.style.height = "100%"
 
+    // Continuously save scroll + cursor so the cache is always current.
+    // Don't rely on onCleanup ordering (the createEffect may destroy the
+    // editor before the component's onCleanup reads state).
+    const scroller = editorView.scrollDOM
+    const filePath = props.filePath
+    const ev = editorView
+    const saveState = () => {
+      editorStateCache.set(filePath, {
+        scroll: scroller?.scrollTop ?? 0,
+        cursor: ev.state.selection.main.head,
+      })
+    }
+    if (scroller) {
+      scroller.addEventListener("scroll", saveState, { passive: true })
+    }
+    // Also save on any doc/selection change (captures cursor moves without scroll)
+    const updateListener = EditorView.updateListener.of((update) => {
+      if (update.selectionSet || update.docChanged) saveState()
+    })
+    ev.dispatch({ effects: editableCompartment.reconfigure([
+      editableExtensions({ readOnly: false, onChange }),
+      updateListener,
+    ]) })
+
+    // Restore saved state for this file (survives tab switches).
+    const saved = editorStateCache.get(props.filePath)
+    if (saved) {
+      // Restore cursor immediately (doc is already loaded)
+      const pos = Math.min(saved.cursor, ev.state.doc.length)
+      ev.dispatch({ selection: { anchor: pos, head: pos } })
+      // Restore scroll after layout settles
+      setTimeout(() => {
+        if (scroller) scroller.scrollTop = saved.scroll
+      }, 80)
+    }
+
     // Stash the clipboard bridge on the container
     ;(containerRef as any).__amcEditor = {
       getSelectedText(): string {
@@ -150,6 +190,12 @@ export function PreviewEditor(props: {
 
   onCleanup(() => {
     if (editorView) {
+      // Final save — belt-and-suspenders alongside the live listeners.
+      const scroller = editorView.scrollDOM
+      editorStateCache.set(props.filePath, {
+        scroll: scroller?.scrollTop ?? 0,
+        cursor: editorView.state.selection.main.head,
+      })
       editorView.destroy()
       editorView = null
     }

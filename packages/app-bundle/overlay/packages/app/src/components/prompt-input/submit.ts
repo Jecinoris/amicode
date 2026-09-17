@@ -40,6 +40,7 @@ export type FollowupDraft = {
   agent: string
   model: { providerID: string; modelID: string }
   variant?: string
+  verbosity?: string
 }
 
 type FollowupSendInput = {
@@ -97,6 +98,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
           providerID: input.draft.model.providerID,
           variant: input.draft.variant,
         },
+        verbosity: input.draft.verbosity,
         files: await Promise.all(
           images.map(async (attachment) => ({
             uri: await blobDataUrl(attachment.blob, attachment.mime),
@@ -172,6 +174,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
+      verbosity: input.draft.verbosity,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -340,6 +343,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const currentModel = modelSelection.current()
     const currentAgent = local.agent.current()
     const variant = modelSelection.variant.current()
+    const verbosity = modelSelection.verbosity?.current()
     if (!currentModel || !currentAgent) {
       showToast({
         title: language.t("prompt.toast.modelAgentRequired.title"),
@@ -456,6 +460,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
+      verbosity,
     }
 
     const clearInput = () => {

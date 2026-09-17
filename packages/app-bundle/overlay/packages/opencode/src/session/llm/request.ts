@@ -15,6 +15,7 @@ import { Effect, Record } from "effect"
 import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
+import { resolveVerbosityReminder } from "./verbosity"
 
 const USER_AGENT = `opencode/${InstallationVersion}`
 
@@ -67,7 +68,6 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
           : [input.agent.prompt, PROMPT_COMMUNICATING]
         : SystemPrompt.provider(input.model)),
       ...input.system,
-      ...(input.user.system ? [input.user.system] : []),
     ]
       .filter((x) => x)
       .join("\n"),
@@ -106,6 +106,14 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   }
   if (isOpenaiOauth) options.instructions = system.join("\n")
 
+  // user.system (which carries verbosity rules when set) goes at the END of
+  // the last system message for maximum recency weight. Appending to the
+  // existing entry (rather than pushing a new one) avoids "multiple system
+  // messages" rejections from providers like Bedrock.
+  if (input.user.system && system.length > 0) {
+    system[system.length - 1] += "\n\n" + input.user.system
+  }
+
   const messages =
     isOpenaiOauth || input.isWorkflow
       ? input.messages
@@ -118,6 +126,27 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
           ),
           ...input.messages,
         ]
+
+  // Mid-conversation verbosity reminder: inject a short system message right
+  // before the current user message so the model sees the active mode at the
+  // point where it transitions from history to the current turn. This breaks
+  // pattern-matching when the user switches verbosity mid-session.
+  //
+  // Skip for providers that reject interleaved system messages (Bedrock,
+  // Azure Completions). For those, the full rules in the top-level system
+  // message are the only enforcement — still effective on the first turn,
+  // weaker on mid-session switches.
+  const supportsInterleavedSystem =
+    input.model.api.npm !== "@ai-sdk/amazon-bedrock" &&
+    input.model.api.npm !== "@ai-sdk/amazon-bedrock/mantle"
+  const verbosityTag = input.user.system?.match(/\[verbosity:(\w+)\]/)?.[1]
+  const verbosityReminder = resolveVerbosityReminder(verbosityTag)
+  if (verbosityReminder && supportsInterleavedSystem && messages.length > 1) {
+    const lastUserIdx = messages.findLastIndex((m) => m.role === "user")
+    if (lastUserIdx > 0) {
+      messages.splice(lastUserIdx, 0, { role: "system", content: verbosityReminder })
+    }
+  }
 
   const params = yield* input.plugin.trigger(
     "chat.params",

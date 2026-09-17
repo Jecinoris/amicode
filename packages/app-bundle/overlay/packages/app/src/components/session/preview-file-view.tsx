@@ -219,6 +219,13 @@ export function PreviewFileView(props: {
 
   onCleanup(() => {
     if (savedTimer) clearTimeout(savedTimer)
+    // Auto-save unsaved edits on teardown (session tab switch remounts the
+    // entire preview panel, destroying local state). Better to write to disk
+    // than to lose the user's work.
+    const pending = unsavedContent()
+    if (pending !== null) {
+      void serverSDK().client.file.write({ path: props.filePath, content: pending }).catch(() => {})
+    }
   })
 
   // ─── Render ────────────────────────────────────────────────────────────
