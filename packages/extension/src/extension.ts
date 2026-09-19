@@ -73,6 +73,8 @@ import {
   readFleetTopology,
   readFleetTopologyWithRefresh,
   fleetConfigOf,
+  divertToFleetRelay,
+  FLEET_GUARD_BINARY_SUFFIX,
   verbRunnerWithPaths,
   type VerbRunResult,
 } from "./fleet_topology";
@@ -101,6 +103,8 @@ import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdopte
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
+import { FleetPostureStateWriter } from "./fleet_posture_state";
+import { recordPostureState } from "./fleet_posture_feed";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -152,8 +156,13 @@ let fleetVerbRunner: (() => VerbRunResult) | undefined;
  *  — never a silent fallthrough, never a raw-file read. The GUARD remains the
  *  enforcement (it fails closed on a broken verb); this check is the UX layer. */
 function isFleetClientGuard(binary: string | undefined, log: (line: string) => void = () => {}): boolean {
-  if (process.platform !== "darwin") return false;
-  if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
+  // #1261 (AC3): the never-fork decision is PLATFORM-AGNOSTIC — NO darwin gate.
+  // The guard binary is the OS-neutral installed signal; the role comes from
+  // the projection (fleet_topology, already OS-neutral). A client spawns no
+  // local engine on mac, linux, OR WSL alike — removing the old
+  // `process.platform !== "darwin"` early-return that let a linux/WSL client
+  // silently cold-spawn one (the ADR-0005 split-brain, #1227).
+  if (!binary || !binary.endsWith(FLEET_GUARD_BINARY_SUFFIX)) return false;
   const decision = readFleetTopologyWithRefresh({ runVerb: fleetVerbRunner });
   if (decision.state.kind === "ok" && decision.state.verdict !== undefined) {
     log(`[fleet] projection freshness: ${decision.state.verdict}${decision.state.advisory === undefined ? "" : ` — ${decision.state.advisory}`}`);
@@ -170,7 +179,7 @@ function isFleetClientGuard(binary: string | undefined, log: (line: string) => v
     log(`[fleet] ${decision.state.detail}`);
     return false;
   }
-  return decision.state.role === "client";
+  return divertToFleetRelay(binary, decision.state);
 }
 
 /** #398 (slice 4e): the fleet activation config, read from the workspace
@@ -205,6 +214,17 @@ function readFleetActivationConfig(cfg: vscode.WorkspaceConfiguration): FleetAct
         : {}),
     },
   };
+}
+
+/** #1260: the fleet transport provider selector (`amicode.fleetTransport`),
+ *  read into the wiring's fleetTransport option. Empty/unset → undefined → the
+ *  wiring defaults to `ssh` (today's launchd-forward behavior, byte-identical).
+ *  A disabled or not-yet-shipped provider yields the honest hub-down, never a
+ *  silent fallback to another provider (the selection is resolved in the
+ *  wiring via resolveFleetTransportKind). */
+function readFleetTransportOption(cfg: vscode.WorkspaceConfiguration): { kind?: string } {
+  const kind = cfg.get<string>("fleetTransport", "").trim();
+  return kind !== "" ? { kind } : {};
 }
 
 /** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
@@ -775,8 +795,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           else if (pick === `Show log`) opencodeChannel.show();
         });
     };
+    // #780: the SOLE writer of the machine-posture state file. The context
+    // plugin reads it to render an honest posture block (which machine, mode,
+    // hub identity + reachability). We write it FROM this attach loop, only on
+    // FleetPollHysteresis TRANSITIONS (attach = fleet/hub-regained; detach =
+    // hub-lost/fell-back), so a blip below the threshold never rewrites it. The
+    // hub identity comes from the projection topology's canonical address; the
+    // client rides the local tunnel forward.
+    //
+    // #1265 (Slice 5): the fleet/standalone writes below go through the
+    // fleet_posture_feed seam (recordPostureState) — ONE fact-builder, the ONE
+    // writer. The relay's FleetPostureDetector computes the hub-up-but-slow
+    // DEGRADED steady state this up/down probe cannot see; when the client relay
+    // boot co-locates that detector with this loop, its snapshot feeds the SAME
+    // writer here via recordDetectorSnapshot (NO second writer). Its degraded
+    // posture already renders honestly (stack_state renderPostureLines).
+    const postureWriter = new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) });
+    const postureHostname = os.hostname();
+    const postureCanonical = topology.kind === "ok" ? topology.canonical : undefined;
+    const postureHubHost = postureCanonical?.host;
+    const postureHubPort = postureCanonical?.port ?? fleetPort;
+    const postureHub = {
+      name: postureHubHost ?? null,
+      base_url: postureHubHost ? `http://${postureHubHost}:${postureHubPort}` : `http://127.0.0.1:${fleetPort}`,
+    };
     const checkFleet = async () => {
       let up = false;
+      const probeStarted = Date.now();
       try {
         const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
           signal: AbortSignal.timeout(1500),
@@ -786,11 +831,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } catch {
         up = false; // connection refused / timeout — the same hysteresis applies
       }
+      const probeRttMs = Date.now() - probeStarted;
       const d = fleetPoll.onProbe(up);
       if (d.transition === "attach") {
         opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
         statusBar?.setServerReady(true);
         sseClient?.connect(opencodeReadyUrl);
+        // #780: attach (first attach OR hub-regained) — record the live fleet
+        // posture so the next session's context names the hub + reachability.
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("fleet", { hostname: postureHostname, hub: postureHub, rttMs: probeRttMs }, postureWriter);
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
           // Fleet client: no local service boots in this mode, so frameUrl()
           // resolves the tunnel engine origin — the honest available frame.
@@ -803,6 +853,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } else if (d.transition === "detach") {
         opencodeReadyUrl = undefined;
         statusBar?.setServerReady(false);
+        // #780: hub-lost — the client fell back. Record the standalone posture
+        // with this instant as the fallback time, so context stops rendering
+        // the stale role line as if attached (the 2026-09-03 outage failure).
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("standalone", { hostname: postureHostname, hub: postureHub }, postureWriter);
         opencodeChannel.appendLine(
           `[fleet] tunnel down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — go standalone to work locally`,
         );
@@ -1036,6 +1091,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // entitlement-staged gate still decides whether fleet surfaces exist.
       fleetActivation: () =>
         resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+      // #1260: the pluggable transport provider selector (default ssh).
+      fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
       // Derive a fixed service port from the engine port so the iframe origin
       // stays stable across window reloads — preserving localStorage (settings,
       // titlebar positions, developer tool paths). Falls back to ephemeral if
@@ -1352,6 +1409,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
         fleetActivation: () =>
           resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+        // #1260: the pluggable transport provider selector (default ssh).
+        fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
         port: configuredPort > 0 ? configuredPort + 1 : undefined,
       });
       amicodeService = adoptedServiceBoot ?? undefined;
@@ -1835,6 +1894,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevBinary = cfg.get<string>("opencodeBinary", "");
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
+    // #1265 (Slice 5): the manual fallback is an attach-state TRANSITION too —
+    // persist the standalone posture through #780's single writer class so the
+    // context render stops claiming "attached" the instant the user chooses
+    // standalone (AC1: never a stale "attached" claim). Same writer discipline
+    // as the checkFleet loop (transition-only, atomic, never throws) — NOT a
+    // second write mechanism. The hub identity is the projection's canonical.
+    try {
+      const canonical = topology.kind === "ok" ? topology.canonical : undefined;
+      const host = canonical?.host;
+      recordPostureState(
+        "standalone",
+        { hostname: os.hostname(), hub: { name: host ?? null, base_url: host ? `http://${host}:${canonical?.port ?? 4096}` : null } },
+        new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) }),
+      );
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] go standalone: posture-state write skipped — ${(e as Error).message}`);
+    }
     // #1106: the write changed the file amicissimo's ONE parser reads — refresh
     // the projection cache through the verb NOW so the guard + status bar + health
     // checks see role=standalone immediately (the coherence rule: every fleet.json
@@ -2004,19 +2080,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
 
-  // Activation-time fleet drift warning (darwin only). If this machine is a fleet
-  // client but the guard is missing/stale or the tunnel is mis-tuned, surface
-  // ONE warning with a Fix action — don't silently fork.
+  // Activation-time fleet drift warning (#1261 AC4: cross-platform). If this
+  // machine is a fleet client but the guard is missing/stale or the settings
+  // are wrong, surface ONE warning with a Fix action — don't silently fork.
+  // The guard/settings/role checks run on mac, linux, AND WSL; only the
+  // launchd-plist tunnel check is darwin-specific (it self-skips elsewhere,
+  // #1260 owns the linux tunnel).
   void (() => {
-    if (process.platform !== "darwin") return;
     try {
       const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
-      const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      // The launchd tunnel plist is darwin-only; on linux/WSL this stays null
+      // and checkFleetTunnel self-skips (deferring the linux tunnel to #1260).
       let plistContent: string | null = null;
-      try {
-        plistContent = fs.readFileSync(plistPath, "utf8");
-      } catch {
-        plistContent = null;
+      if (process.platform === "darwin") {
+        const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        try {
+          plistContent = fs.readFileSync(plistPath, "utf8");
+        } catch {
+          plistContent = null;
+        }
       }
       const checks = fleetHealthReport({
         repoGuardPath,

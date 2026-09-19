@@ -268,6 +268,12 @@
           "default": "",
           "description": "Fleet activation (beta): the hub's base URL over the fleet tunnel (e.g. http://127.0.0.1:4096). Env override: AMICODE_FLEET_HUB_URL. Fleet mode arms ONLY when BOTH this and amicode.fleetTunnelAlias are set AND the amicissimo entitlement stages — absent config means a byte-identical base."
         },
+        "amicode.fleetTransport": {
+          "type": "string",
+          "enum": ["ssh", "tailscale", "direct"],
+          "default": "ssh",
+          "description": "Fleet transport provider (#1260): the client↔host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward — zero new dependency. `tailscale` (opt-in) has the host run `tailscale serve` fronting its loopback service and the client resolve the host's MagicDNS origin — WireGuard roaming/NAT/low-latency with no TCP-over-TCP, and the loopback bind-guard stays intact (the app still binds localhost). `direct` (opt-in) targets a supplied URL for a host already reachable on a VPN/LAN — the operator arranges reachability out-of-band, with a health probe and no tunnel-manager lifecycle; the host still binds loopback behind its own edge. A disabled or unknown provider yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
+        },
         "amicode.fleetTunnelAlias": {
           "type": "string",
           "default": "",

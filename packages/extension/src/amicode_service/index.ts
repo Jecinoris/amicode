@@ -35,6 +35,7 @@ import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
 import { AppShelf } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
+import { SessionEventResume } from "./session_event_resume";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, type UpstreamMode } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -428,6 +429,10 @@ export function createAmicodeService(
       overlaySource?: string | null;
       /** The hub upstream over the fleet tunnel (late-bound). */
       hub: { getUrl: () => string | undefined };
+      /** #1261 (AC6): this relay is a fleet CLIENT (never-fork, NO local
+       *  engine). Suppresses the standalone→engine mode flip and switches the
+       *  no-upstream 503 to the client's own honest hub-down state. */
+      client?: boolean;
       /** The data-driven routing mode; default "fleet" (a staged plane with
        *  no getter runs fleet). */
       getMode?: () => UpstreamMode;
@@ -495,6 +500,17 @@ export function createAmicodeService(
           }
         : undefined;
       const rawGetMode = opts.fleet.getMode ?? ((): UpstreamMode => "fleet");
+      // #1261 (AC6): capture the client flag where the `opts.fleet !==
+      // undefined` narrowing holds (the getMode closure cannot re-narrow it).
+      const isClient = opts.fleet.client === true;
+      // #1264 (Slice 4): a fleet CLIENT carries the full data plane over the
+      // tunnel and has NO local engine — a blip drops the whole SSE gap. Arm
+      // per-session SSE resume so `/api/session/{id}/event` reconnects
+      // losslessly (cursor carried across reconnects, boundary deduped). Only
+      // for the client: the engine-armed base machine flips to its local engine
+      // on hub-down (never relies on the tunnel for its stream), so its
+      // steady-state stays byte-identical.
+      const sessionResume = isClient ? new SessionEventResume() : undefined;
       // D6: the hub-down posture IS the base standalone posture — the
       // effective mode falls back to the local engine (a session created in
       // a hub-down window is a LOCAL session, D3), and recovery re-enters
@@ -502,6 +518,10 @@ export function createAmicodeService(
       // the posture snapshot's refetch_epoch is the client's key).
       const getMode = (): UpstreamMode => {
         if (rawGetMode() !== "fleet") return rawGetMode();
+        // #1261 (AC6): a CLIENT has NO local engine — NEVER flip
+        // standalone→engine. The hub-down posture is an honest hub-down 503,
+        // not a silent local route (the engine-armed machine keeps the flip).
+        if (isClient) return "fleet";
         return monitor.snapshot().state === "standalone" ? "engine" : "fleet";
       };
       const writeDeps: FleetWriteDeps = {
@@ -520,9 +540,14 @@ export function createAmicodeService(
           ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           onOutcome: (o) => monitor.record(o),
           ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
+          ...(sessionResume ? { sessionResume } : {}),
         }),
         writes: { handle: (req, res) => handleFleetWrite(writeDeps, req, res) },
         onNoUpstream: () => monitor.record({ kind: "no-response", detail: "no-upstream" }),
+        // #1261 (AC6): a client answers hub-down with its OWN honest 503 and
+        // never flips to a (nonexistent) local engine.
+        ...(isClient ? { client: true } : {}),
+        hubDownPointer: () => monitor.snapshot().pointer,
       });
       registerFleetRoutes(server, {
         getMode,

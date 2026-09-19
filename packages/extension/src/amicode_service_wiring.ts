@@ -34,6 +34,14 @@
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
+import { relayVersionGate, type RelayVersionGateOptions } from "./amicode_service/fleet_version_skew";
+import {
+  transportForSelection,
+  resolveFleetTransportKind,
+  hubUrlStringFromProvider,
+  type FleetTransportKind,
+  type FleetTransportProvider,
+} from "./amicode_service/fleet_transport";
 import type { FleetActivation } from "./fleet_activation";
 
 /** What consumers (terminal env, dogfood probes, the frame picker) need. */
@@ -73,6 +81,9 @@ export interface AmicodeServiceWiringOptions {
     overlaySource?: string | null;
     hub: { getUrl: () => string | undefined };
     getMode?: () => "engine" | "fleet";
+    /** #1261 (AC6): boot the fleet plane as a CLIENT relay (never-fork, no
+     *  local engine) — honest hub-down, no standalone→engine flip. */
+    client?: boolean;
     posture?: Partial<import("./amicode_service/fleet_posture").FleetPostureTuning>;
     tunnelConfigPath?: string;
     dataPlaneTimeoutMs?: number;
@@ -92,8 +103,21 @@ export interface AmicodeServiceWiringOptions {
   /** #398: the fleet transport tuning the activation does not own — the
    *  client-enforced data-plane timeout and the write pipeline's budget.
    *  The harness tightens these for the kill/hang legs; production uses
-   *  the defaults. */
-  fleetTransport?: { dataPlaneTimeoutMs?: number; writeTimeoutMs?: number; writeMaxRetries?: number };
+   *  the defaults. #1260 adds `kind` — the `amicode.fleetTransport` provider
+   *  selector (default `ssh`) — and `disabled`, the independently-disableable
+   *  knob. An unset/`ssh` kind reproduces today's launchd-forward behavior; a
+   *  disabled, unknown, or (in a build that registered a subset) unregistered
+   *  provider yields the honest hub-down (no base URL bound), NEVER a silent
+   *  fallback to another provider. */
+  fleetTransport?: {
+    dataPlaneTimeoutMs?: number;
+    writeTimeoutMs?: number;
+    writeMaxRetries?: number;
+    /** The `amicode.fleetTransport` setting (default `ssh`). */
+    kind?: string;
+    /** Independently disabled providers. */
+    disabled?: FleetTransportKind[];
+  };
   /** Fixed port for the service. When set, the service binds to this port
    *  so the iframe origin stays stable across window reloads — preserving
    *  localStorage (settings, titlebar positions, etc.). Falls back to an
@@ -104,6 +128,12 @@ export interface AmicodeServiceWiringOptions {
    *  LIVE-provider getter (the running engine's /config/providers, key-free
    *  ids only) — the credential gate's refresh loop. */
   modelRouting?: import("./amicode_service/model_routing").ModelRoutingDeps;
+  /** #1261 (AC7): the version-skew relay-START gate. A client relay sets it
+   *  (its pinned version + a host-version probe); the relay REFUSES to boot on
+   *  a disagreement beyond tolerance (an actionable message, never a generic
+   *  downstream timeout). Matching — or an unreadable host version (host down,
+   *  deferred to hub-down) — boots normally. Absent = no gate (base boots). */
+  versionGate?: RelayVersionGateOptions;
 }
 
 /**
@@ -121,6 +151,18 @@ export async function startAmicodeService(
   opts: AmicodeServiceWiringOptions = {},
 ): Promise<AmicodeServiceBoot | undefined> {
   try {
+    // #1261 (AC7): the version-skew relay-START gate. Before wiring anything,
+    // a client relay checks the host version against its pin — a disagreement
+    // beyond tolerance REFUSES to boot with an actionable message (never a
+    // generic downstream timeout). Unreadable / matching versions fall through.
+    if (opts.versionGate !== undefined) {
+      const gate = await relayVersionGate(opts.versionGate);
+      if (!gate.start) {
+        log.appendLine(`[amicode-service] relay-start REFUSED — version skew: ${gate.reason}`);
+        return undefined;
+      }
+      log.appendLine(`[amicode-service] version gate: ${gate.reason}`);
+    }
     // #398: resolve the activation ONCE for the boot decision (armed → the
     // fleet option is assembled; not armed → it is never passed), keeping
     // the resolver itself for the LATE-BOUND hub getter below.
@@ -128,7 +170,33 @@ export async function startAmicodeService(
       typeof opts.fleetActivation === "function" ? opts.fleetActivation() : opts.fleetActivation;
     const activation = resolveActivation();
     let fleet: AmicodeServiceWiringOptions["fleet"];
+    let transportNote = "";
     if (activation !== undefined && activation.armed) {
+      // #1260: the client↔host transport is a PLUGGABLE PROVIDER selected by
+      // the amicode.fleetTransport setting (default `ssh`). The ssh provider
+      // wraps the launchd/systemd `-L` forward — its resolveBaseUrl() is the
+      // loopback hub URL, read LATE (per request) so a de-armed activation
+      // yields undefined (the honest hub-down, never a stale snapshot). The hub
+      // proxy consumes it through the existing getUrl seam. A disabled,
+      // unknown, or unregistered provider binds NO base URL (the honest
+      // hub-down), NEVER a silent fallback to another provider's URL.
+      const transportSel = resolveFleetTransportKind({
+        setting: opts.fleetTransport?.kind,
+        ...(opts.fleetTransport?.disabled !== undefined ? { disabled: opts.fleetTransport.disabled } : {}),
+      });
+      const lateHubUrl = (): string | undefined => {
+        const a = resolveActivation();
+        return a !== undefined && a.armed ? a.hubUrl : undefined;
+      };
+      // #1260: each ok kind gets ITS OWN provider — ssh wraps the loopback
+      // forward URL, tailscale the host's MagicDNS origin, direct the supplied
+      // VPN/LAN URL — NEVER another kind's (the no-cross-provider-fallback law).
+      // A not-ok selection (disabled / unknown / unregistered) binds NO URL, so
+      // the hub proxy answers its honest hub-down, never a different provider's URL.
+      const transport: FleetTransportProvider = transportForSelection(transportSel, lateHubUrl);
+      transportNote = transportSel.ok
+        ? `; transport: ${transportSel.kind}`
+        : `; transport: ${opts.fleetTransport?.kind ?? "?"} unavailable — ${transportSel.reason} (honest hub-down, no fallback)`;
       fleet = {
         // staging inputs the activation carries (undefined = the machine's
         // real resolution — the production path; tests/harnesses inject)
@@ -137,15 +205,12 @@ export async function startAmicodeService(
           ? { entitlementConfigDir: activation.entitlementConfigDir }
           : {}),
         ...(activation.overlaySource !== undefined ? { overlaySource: activation.overlaySource } : {}),
-        // LATE-BOUND: re-resolve per request. A de-armed activation (config
-        // cleared mid-session) is the honest upstream absence — the hub
-        // proxy answers its named 503 and the posture counts no-responses —
-        // never a stale boot-time snapshot.
+        // LATE-BOUND through the transport provider: re-resolve per request. A
+        // de-armed activation (config cleared mid-session) is the honest
+        // upstream absence — the hub proxy answers its named 503 and the
+        // posture counts no-responses — never a stale boot-time snapshot.
         hub: {
-          getUrl: () => {
-            const a = resolveActivation();
-            return a !== undefined && a.armed ? a.hubUrl : undefined;
-          },
+          getUrl: () => hubUrlStringFromProvider(transport),
         },
         // D6 tuning: the named config keys, defaults = the fixture values.
         posture: activation.posture,
@@ -214,7 +279,7 @@ export async function startAmicodeService(
           )}`
         : "";
     log.appendLine(
-      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${activationNote}${fleetNote}`,
+      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${activationNote}${transportNote}${fleetNote}`,
     );
     return { service, url: url.toString().replace(/\/$/, ""), authHeader: service.authHeader };
   } catch (err) {

@@ -58,7 +58,22 @@ export interface FleetPlane {
    *  tunnel getter yielded nothing) — feeds the posture detector, so a
    *  tunnel-down window counts toward the named hub-down condition. */
   onNoUpstream?: () => void;
+  /** #1261 (AC6): this relay is a fleet CLIENT (never-fork, NO local engine).
+   *  When true, a hub-down window is the relay's OWN honest hub-down 503 —
+   *  never "engine upstream not available" (there is no engine to be
+   *  unavailable) and never a silent standalone→engine fall-through. */
+  client?: boolean;
+  /** #1261 (AC6): the live hub-down pointer for the client's honest 503 (the
+   *  posture snapshot's pointer when standalone; a default otherwise). */
+  hubDownPointer?: () => string | null;
 }
+
+/** #1261 (AC6): a client's own named hub-down state — distinct from the base
+ *  "hub upstream not available" and never the engine's message. */
+export const FLEET_HUB_DOWN_ERROR = "fleet-hub-down";
+export const FLEET_HUB_DOWN_POINTER =
+  "the fleet host is unreachable — a client holds no local engine (never-fork); " +
+  "check the tunnel / host service, or Go Standalone to work locally";
 
 interface RouteEntry {
   method: "GET" | "POST";
@@ -217,6 +232,25 @@ export class AmicodeServiceServer {
     return Buffer.concat(chunks).toString("utf8");
   }
 
+  /** #1262: does this request belong to the HOST's authoritative /amicode/*
+   *  surface — i.e. should a fleet CLIENT proxy it to the host instead of
+   *  serving it from the local exact-match table / catch-all? True ONLY for a
+   *  fleet client, in fleet routing mode, on an /amicode/* path that is NOT the
+   *  client's OWN /amicode/fleet/* honesty surface (posture/mode/staging —
+   *  those stay local). Standalone and the engine-armed base machine → false
+   *  (they own a local store and serve /amicode/* locally, byte-identically). */
+  private shouldProxyAmicodeToHost(url: URL): boolean {
+    if (!this.fleetPlane?.client) return false;
+    if (this.routingMode !== "fleet") return false;
+    const p = url.pathname;
+    if (p !== "/amicode" && !p.startsWith("/amicode/")) return false;
+    // The client's own fleet-plane surface stays LOCAL — never proxied (a
+    // proxied posture/status would report the HOST's, defeating the honesty
+    // surface #1261 AC6 relies on).
+    if (p === "/amicode/fleet" || p.startsWith("/amicode/fleet/")) return false;
+    return true;
+  }
+
   private async dispatch(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const send = (r: AmicodeHandlerResult | AppShelfResult) => {
       res.statusCode = r.status ?? 200;
@@ -232,26 +266,39 @@ export class AmicodeServiceServer {
         send(unauthorized());
         return;
       }
-      const route = this.routes.get(`${req.method} ${url.pathname}`);
-      if (route) {
-        const body = await this.readBody(req);
-        const result = await route.handler({ url, body });
-        send(result);
-        return;
-      }
-      // #822 precedence, after the exact route table: the /amicode/*
-      // namespace is OWNED by this service (unmatched paths 404 here — the
-      // fork-parity discipline; stock canonical serves no /amicode/* so
-      // proxying them would just launder our 404) → the app shelf → the
-      // engine proxy.
-      if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
-        send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
-        return;
-      }
-      const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
-      if (shelfHit) {
-        send(shelfHit);
-        return;
+      // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
+      // the ENTIRE local /amicode/* dispatch (the exact-match route table AND
+      // the catch-all 404 below) so a REGISTERED route (GET /amicode/problems,
+      // POST /amicode/connections) no longer shadows the proxy — the request
+      // falls through to the fleet branch and routes to the host's
+      // authoritative amicode_service (reads → hub proxy, non-GET → the
+      // write-failure contract). EXCEPTION: /amicode/fleet/* is the CLIENT'S
+      // OWN honesty surface (its live posture/mode/staging receipt) and stays
+      // LOCAL. Gated on the client role so standalone AND the engine-armed base
+      // machine are byte-identical — both still serve /amicode/* locally.
+      const proxyAmicodeToHost = this.shouldProxyAmicodeToHost(url);
+      if (!proxyAmicodeToHost) {
+        const route = this.routes.get(`${req.method} ${url.pathname}`);
+        if (route) {
+          const body = await this.readBody(req);
+          const result = await route.handler({ url, body });
+          send(result);
+          return;
+        }
+        // #822 precedence, after the exact route table: the /amicode/*
+        // namespace is OWNED by this service (unmatched paths 404 here — the
+        // fork-parity discipline; stock canonical serves no /amicode/* so
+        // proxying them would just launder our 404) → the app shelf → the
+        // engine proxy.
+        if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
+          send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
+          return;
+        }
+        const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
+        if (shelfHit) {
+          send(shelfHit);
+          return;
+        }
       }
       // #391 (D1): the upstream is chosen by the CURRENT routing mode —
       // fleet routes data + SSE to the hub over the tunnel (the shelf above
@@ -274,6 +321,18 @@ export class AmicodeServiceServer {
           // hub-down condition.
           this.fleetPlane.onNoUpstream?.();
         }
+        // #1261 (AC6): a CLIENT (never-fork, no local engine) answers with its
+        // OWN honest hub-down state — never "engine upstream not available"
+        // (there is no engine), never a silent local fall-through. The base
+        // (engine-armed) machine keeps its "hub upstream not available" 503.
+        if (this.fleetPlane.client) {
+          const pointer = this.fleetPlane.hubDownPointer?.() ?? FLEET_HUB_DOWN_POINTER;
+          send({
+            status: 503,
+            body: JSON.stringify({ ok: false, error: FLEET_HUB_DOWN_ERROR, reason: "hub-unreachable", pointer }),
+          });
+          return;
+        }
         send({ status: 503, body: JSON.stringify({ ok: false, error: "hub upstream not available" }) });
         return;
       }
@@ -294,6 +353,30 @@ export class AmicodeServiceServer {
     if (this.server) throw new Error("amicode service already running");
     const server = http.createServer((req, res) => {
       void this.dispatch(req, res);
+    });
+    // #1263 (Slice 3): the WebSocket/PTY upgrade path. The dispatch table and
+    // both body-pipe proxies are request-only, so WS upgrades (the integrated
+    // terminal's GET /pty/:id/connect) had nowhere to go on a thin client. This
+    // extends the SAME fleet branch dispatch keys on (fleetPlane.client &&
+    // routingMode === "fleet") — a fleet CLIENT tunnels the upgrade to the host
+    // engine, forwarding the engine's OWN 101 verbatim, with hub-credential
+    // translation on the request. Every OTHER posture (engine-armed base
+    // machine, standalone, no fleet plane) keeps the prior no-listener
+    // behavior — the socket is destroyed — so loopback/never-fork is unchanged.
+    server.on("upgrade", (req, socket, head) => {
+      try {
+        if (this.fleetPlane?.client && this.routingMode === "fleet") {
+          this.fleetPlane.hub.handleUpgrade(req, socket, head);
+          return;
+        }
+        socket.destroy();
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          /* already gone — never throw out of the upgrade handler */
+        }
+      }
     });
     this.server = server;
     const listenPort = port ?? 0;
@@ -325,6 +408,15 @@ export class AmicodeServiceServer {
     if (!server) return;
     this.server = undefined;
     this._port = undefined;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      // #1263 (Slice 3): server.close() waits for existing connections to end,
+      // but an UPGRADED WS/PTY tunnel (the relay's proxied terminal) is a
+      // hijacked socket that server.close() never ends on its own — so a live
+      // terminal at shutdown would wedge stop() indefinitely. Force-close every
+      // connection so teardown is prompt and leak-free (idle keep-alives too);
+      // guarded because it is Node ≥18.2.
+      server.closeAllConnections?.();
+    });
   }
 }
