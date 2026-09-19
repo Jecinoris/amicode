@@ -504,10 +504,15 @@ function SessionLineagePrewarmer() {
     for (const tab of tabs.store) {
       if (tab.type !== "session") continue
       const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
-      const lineage = conn?.sync?.session?.lineage
-      if (!lineage) continue
-      if (!lineage.peek(tab.sessionId)) {
-        void lineage.resolve(tab.sessionId).catch(() => {})
+      const session = conn?.sync?.session
+      if (!session) continue
+      if (session.lineage && !session.lineage.peek(tab.sessionId)) {
+        void session.lineage.resolve(tab.sessionId).catch(() => {})
+      }
+      // Messages too: the timeline gates on the sync store holding the
+      // session's messages — a cold message load is the same wire gap.
+      if (session.prefetch) {
+        void session.prefetch(tab.sessionId, 20).catch(() => {})
       }
     }
   })

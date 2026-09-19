@@ -2296,7 +2296,17 @@ export default function Page() {
             </div>
           </Match>
           <Match when={params.id}>
-            <Show when={messagesReady() ? params.id : undefined} keyed>
+            <Show
+              when={messagesReady() ? params.id : undefined}
+              keyed
+              fallback={
+                // #1286 layer 2: a cold message load is a wire round-trip —
+                // over a fleet tunnel the timeline rendered NOTHING for it.
+                <div class="flex-1 flex items-center justify-center">
+                  <Spinner class="size-5 text-v2-icon-icon-muted" />
+                </div>
+              }
+            >
               {(_id) => (
                 <Show
                   when={visibleUserMessages().length > 0 || rolled().length === 0}
