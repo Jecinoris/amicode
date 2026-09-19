@@ -79,6 +79,7 @@ import {
   type VerbRunResult,
 } from "./fleet_topology";
 import { resolveHubTarget, restartHub } from "./hub_ops";
+import { connectToHubOverRemoteSsh } from "./fleet_connect_remote_ssh";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -104,7 +105,12 @@ import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawn
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
+import { WindowModeStateWriter, windowModeFacts } from "./fleet_window_mode_state";
 import { recordPostureState } from "./fleet_posture_feed";
+import { HostFileClient } from "./fleet_host_fs/host_file_client";
+import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
+import { mountAmicoHostFs } from "./fleet_host_fs/mount";
+import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -509,6 +515,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
+  // #1272 — WINDOW MODE (Remote-SSH vs editor-local), an axis ORTHOGONAL to the
+  // link-health posture (#780). Derived from the editor's remote indicator
+  // (vscode.env.remoteName: an "ssh-remote…" string under Remote-SSH, undefined
+  // when local), recorded to its OWN state file via its OWN transition-only
+  // writer (never the posture writer — a window-mode-only change must not be
+  // swallowed by the posture signature), and reflected in the status bar. This
+  // runs for EVERY window regardless of fleet role — a server or a standalone
+  // box can equally be opened over Remote-SSH. The writer never throws.
+  {
+    const windowMode = windowModeFacts(os.hostname(), vscode.env.remoteName);
+    new WindowModeStateWriter({ log: (m) => opencodeChannel.appendLine(m) }).record(windowMode);
+    statusBar.setWindowMode(windowMode.window_mode);
+    opencodeChannel.appendLine(`[fleet] window mode: ${windowMode.window_mode}${windowMode.remote_name ? ` (${windowMode.remote_name})` : ""}`);
+  }
+
   // 2. Start the multi-run RunsManager — tails the append-only runs/index;
   // #351: posts run data to the Work Column bridge (no bottom panel).
   fs.mkdirSync(runsRoot, { recursive: true });
@@ -875,6 +896,42 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void checkFleet();
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
+
+    // #1267: native Explorer shows HOST files. Mount the amico-host:// provider
+    // over the ALREADY-PROXIED host data plane (the client relay + /amicode/*
+    // proxy) so the Explorer, open, and save operate on the host. The transport's
+    // base URL is the tunnel origin (undefined when the tunnel is down → the
+    // provider surfaces the honest hub-down posture, NEVER local files, AC5); the
+    // Authorization is the same header the relay translates to the hub mint. The
+    // mandatory capability label ships in the SAME step (AC4). Mounts ONLY here,
+    // in fleet-client posture (AC6) — standalone/server never reach this branch.
+    const hostExplorerEnabled = vscode.workspace.getConfiguration("amicode").get<boolean>("fleet.hostExplorer", true);
+    const hostFsClient = new HostFileClient({
+      baseUrl: () => opencodeReadyUrl?.toString(),
+      authHeader: () => serverAuthHeaders.Authorization,
+    });
+    const hostFsProvider = new AmicoHostFileSystemProvider(hostFsClient);
+    const hostFsMount = mountAmicoHostFs(
+      { isFleetClient: true, disabled: !hostExplorerEnabled },
+      {
+        registerProvider: (scheme, isReadonly) =>
+          vscode.workspace.registerFileSystemProvider(scheme, hostFsProvider, { isReadonly }),
+        addFolder: (scheme) =>
+          void vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, {
+            uri: vscode.Uri.parse(`${scheme}:/`),
+            name: "Host (fleet)",
+          }),
+        showLabel: (label: CapabilityLabel) => {
+          const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+          item.text = label.text;
+          item.tooltip = label.tooltip;
+          item.show();
+          return { dispose: () => item.dispose() };
+        },
+        log: (m) => opencodeChannel.appendLine(m),
+      },
+    );
+    for (const d of hostFsMount.disposables) ctx.subscriptions.push(d);
   } else if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
@@ -2079,6 +2136,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
+
+  // #1271 (ADR 0025): "Amicode: Connect to Hub over Remote-SSH" — the opt-in
+  // ENTRY into the Remote-SSH posture. The hub coordinates come from the
+  // projection (the ONE topology reader, ADR 0023 — never a hand-built host
+  // string); a missing/broken/alias-less projection renders an honest,
+  // actionable message and opens NO window (AC2). The attach/adoption mechanics
+  // run host-side on activation (#1270) — this command is only the entry.
+  const runConnectRemoteSsh = async (): Promise<void> => {
+    const workspacePath = vscode.workspace.getConfiguration("amicode").get<string>("fleet.hubWorkspacePath", "");
+    const resolution = await connectToHubOverRemoteSsh({ workspacePath });
+    if (resolution.ok) {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh → opening ${resolution.uri}`);
+    } else {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh not resolved (${resolution.reason}): ${resolution.detail}`);
+    }
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.connectRemoteSsh", () => void runConnectRemoteSsh()));
 
   // Activation-time fleet drift warning (#1261 AC4: cross-platform). If this
   // machine is a fleet client but the guard is missing/stale or the settings
