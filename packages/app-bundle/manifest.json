@@ -454,7 +454,7 @@
     "packages/app/src/pages/session-stream-resilience.test.ts": "7def7368219d2351136c31b88a19a97f6a14c18e87562f25d49db8da200e3c28",
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/home.tsx": "06fb5c7718aacfd29b35e730e05d45076b39d6cd5d936d1270fb1bd9424c32fa",
-    "packages/app/src/pages/session.tsx": "a7175bb1286b0f02d733e01a9b12de19f674136f8c4a03961f15ea0ff232406e",
+    "packages/app/src/pages/session.tsx": "267432517d8bb5e1c8cdf228e5b445bc7f2582aeefa2d72c8ceaaaa7a5cdb44c",
     "packages/app/src/pages/home-projects.test.ts": "a90155c37210a0e5b7a095bbfc3ba2d40681f02927d9726148a706bed5ba7891",
     "packages/app/src/pages/layout.tsx": "eaf8bed869b5ec53582db732119fb903b223d749ebda354b1e388de3be02dc52",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
@@ -848,7 +848,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-19T19:00:40.647Z",
+  "extracted_at": "2026-09-19T19:45:49.043Z",
   "per_package": {
     "packages/app": {
       "A": 172,
