@@ -491,6 +491,29 @@ function AmicodeThemeBridge() {
 /** amicode#363: bridge for the extension to open a new draft session with a
  *  pre-filled prompt. Must live inside TabsProvider + ServerProvider so it has
  *  access to useTabs().newDraft. */
+// #1286: cold session lineages blank the session view for a full wire
+// round-trip (send -> new session; switch -> not-yet-synced session) — over
+// a fleet tunnel that is a visible flash. Warm every OPEN session tab's
+// lineage in the background so tab switches resolve synchronously from the
+// sync cache. resolve() dedupes in-flight requests and short-circuits
+// already-cached sessions, so this is a no-op on warm state.
+function SessionLineagePrewarmer() {
+  const global = useGlobal()
+  const tabs = useTabs()
+  createEffect(() => {
+    for (const tab of tabs.store) {
+      if (tab.type !== "session") continue
+      const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
+      const lineage = conn?.sync?.session?.lineage
+      if (!lineage) continue
+      if (!lineage.peek(tab.sessionId)) {
+        void lineage.resolve(tab.sessionId).catch(() => {})
+      }
+    }
+  })
+  return null
+}
+
 function AmicodeNavigateBridge() {
   const tabs = useTabs()
   const server = useServer()
@@ -737,6 +760,7 @@ export function AppInterface(props: {
                 root={(routerProps) => (
                   <TabsProvider>
                     <AmicodeNavigateBridge />
+                    <SessionLineagePrewarmer />
                     <PermissionProvider>
                       <NotificationProvider>
                         <ServerShell>

@@ -27,6 +27,7 @@ import { FileProvider, selectionFromLines, useFile, type FileSelection, type Sel
 import { createStore } from "solid-js/store"
 import type { SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
+import { Spinner } from "@opencode-ai/ui/spinner"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode-ai/ui/scroll-view"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -283,7 +284,18 @@ function ResolvedTargetSessionRoute() {
     // lineage mid-resolution), which tears down the workspace subtree including
     // the terminal. Same-workspace tab switches keep it open because warm
     // targets resolve synchronously from the sync cache.
-    <Show when={directory()}>
+    <Show
+      when={directory()}
+      fallback={
+        // #1286: an uncached lineage (new session on send, first switch to a
+        // not-yet-synced session) resolves over the wire — over a fleet tunnel
+        // that is 0.5-3s of NOTHING. A spinner replaces the blank; the
+        // SessionLineagePrewarmer in app.tsx makes it rare.
+        <div class="flex h-full w-full items-center justify-center">
+          <Spinner class="size-5 text-v2-icon-icon-muted" />
+        </div>
+      }
+    >
       <SDKProvider directory={targetDirectory}>
         <DirectoryDataProvider directory={targetDirectory} server={serverKey}>
           <TargetSessionPage />
