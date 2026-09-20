@@ -65,6 +65,7 @@ import { SettingsProvider, useSettings } from "@/context/settings"
 import { TabsProvider, tabHref, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
+import { normalizeSessionInfo } from "@/utils/session"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import LegacyLayout from "@/pages/layout"
@@ -770,8 +771,12 @@ function SessionLineagePrewarmer() {
       }
       for (const info of recent) {
         // #1294c: seed data.info from the list payload — zero wire cost.
+        // The v2 list objects carry location:{directory} with NO
+        // top-level directory/slug/path — normalizeSessionInfo maps them
+        // (every other consumer normalizes at the boundary; the raw
+        // object crashed the tab strip's render on the real hub).
         try {
-          sync.session.remember(info)
+          sync.session.remember(normalizeSessionInfo(info))
         } catch {
           /* best-effort */
         }
