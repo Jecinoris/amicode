@@ -138,14 +138,22 @@ class Driver:
         """The titlebar buttons are aria-labeled, not text-labeled."""
         return self.ev(r"""(() => { const b = Array.from(document.querySelectorAll('button')).find(x => ((x.getAttribute('aria-label')||'') + (x.innerText||'')).includes('Sessions')); if(b){b.click(); return true} return false })()""")
 
-    def click_card(self, title):
-        return self.ev(r"""(() => {
-          const txt = (e) => ((e.getAttribute && e.getAttribute('aria-label')) || '') + (e.innerText||'');
-          const els = Array.from(document.querySelectorAll('button, [role=button], div'))
-            .filter(e => e.childElementCount <= 6 && txt(e).trim().startsWith('""" + title + r"""'));
-          if (!els.length) return 'missing';
-          els[els.length-1].click(); return 'ok';
-        })()""")
+    def click_card(self, title, attempts=10):
+        """The cards re-render as late wire data lands — retry the click
+        until it lands on a live element."""
+        result = "missing"
+        for _ in range(attempts):
+            result = self.ev(r"""(() => {
+              const txt = (e) => ((e.getAttribute && e.getAttribute('aria-label')) || '') + (e.innerText||'');
+              const els = Array.from(document.querySelectorAll('button, [role=button], div'))
+                .filter(e => e.childElementCount <= 6 && txt(e).trim().startsWith('""" + title + r"""'));
+              if (!els.length) return 'missing';
+              els[els.length-1].click(); return 'ok';
+            })()""")
+            if result == "ok":
+                return result
+            time.sleep(1.0)
+        return result
 
 
 def run(debug_port, app_port, latency_ms):
@@ -156,9 +164,14 @@ def run(debug_port, app_port, latency_ms):
     boot_blank, _ = d.blank_ms()
 
     # Flow 1: open the sessions list, then two sessions, and switch tabs.
-    d.open_sessions_view()
-    time.sleep(5)
-    cards = d.find_session_cards()
+    # The list arrives over the (latency-delayed) wire — poll, don't sleep.
+    cards = 0
+    for _ in range(30):
+        d.open_sessions_view()
+        cards = d.find_session_cards()
+        if cards > 0:
+            break
+        time.sleep(1.0)
     if cards == 0:
         raise AssertionError("session cards not found — the mock's list shape needs updating")
     assert d.click_card("Alpha test session") == "ok"
@@ -183,6 +196,61 @@ def run(debug_port, app_port, latency_ms):
         if clicked != "ok":
             raise AssertionError(f"tab for {title} not found — selector drift?")
         time.sleep(4)
+
+    # Flow 2 (#1291 durable mirror): reload MID-SESSION. The tabs restore
+    # from localStorage, the route lands straight back on the session, and
+    # the timeline must render from the IndexedDB mirror — NOT wait on the
+    # wire. Measured: ms from reload to the session text being present.
+    reload_blank = 0.0
+    reload_ms = None
+    if d.ev("location.pathname.includes('/session/')"):
+        t0 = time.time()
+        d.ev("location.reload()")
+        deadline = time.time() + 30
+        # first: the app shell returns (main exists)...
+        while time.time() < deadline:
+            if d.ev("document.querySelector('main') !== null"):
+                break
+            time.sleep(0.2)
+        # ...then the MIRRORED timeline content (the mock's messages).
+        # At 800ms wire latency an unmirrored reload takes 4s+ here; the
+        # mirror must render from disk in well under that.
+        t_main = time.time() - t0
+        while time.time() < deadline:
+            if d.ev(r"""document.body.innerText.includes('assistant reply 1')"""):
+                reload_ms = time.time() - t0
+                break
+            time.sleep(0.1)
+        reload_blank, _ = d.blank_ms(since=(t0 * 1000 - 62000))
+        print(f"  reload: shell={t_main:.1f}s content={reload_ms if reload_ms else 'TIMEOUT'}s")
+        if reload_ms is None:
+            raise AssertionError("post-reload session content never rendered (mirror dead?)")
+        if reload_ms > 6.0:
+            raise AssertionError(f"post-reload content took {reload_ms:.1f}s — hydration did not beat the wire")
+
+    # Flow 3 (#1264 lossless reconnect): kill the app's SSE mid-session,
+    # emit a session.updated DURING the reconnect gap, and assert the
+    # replay (mock's ring buffer + the client's Last-Event-ID) delivers
+    # it — the tab strip retitles with no refresh and no wire refetch.
+    import urllib.request as _ur
+    def _post(path, obj=None):
+        req = _ur.Request(f"http://127.0.0.1:{app_port}{path}", method="POST",
+                          data=json.dumps(obj).encode() if obj is not None else b"",
+                          headers={"Content-Type": "application/json"})
+        return _ur.urlopen(req, timeout=10).status
+    info = json.load(_ur.urlopen(f"http://127.0.0.1:{app_port}/session/ses_test_alpha_0001", timeout=10))
+    info["title"] = "Alpha RETITLED"
+    killed = _post("/__test/kill_sse")
+    emitted = _post("/__test/emit", {"type": "session.updated", "directory": "/home/aaron/test-project", "properties": {"info": info}})
+    retitled = False
+    for _ in range(60):
+        if d.ev(r"""document.body.innerText.includes('Alpha RETITLED')"""):
+            retitled = True
+            break
+        time.sleep(0.5)
+    print(f"  sse-gap: kill={killed} emit={emitted} retitled={retitled} -> {'OK' if retitled else 'FAIL'}")
+    if not retitled:
+        raise AssertionError("#1264 replay did not deliver the gap event (no retitle)")
 
     total_blank, events = d.blank_ms()
     verdict = "PASS"

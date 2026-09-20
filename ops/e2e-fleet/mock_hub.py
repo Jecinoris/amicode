@@ -163,6 +163,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
+        if self.path.split("?")[0] == "/__test/emit":
+            try:
+                payload_in = json.loads(body.decode() or "{}")
+            except Exception:
+                payload_in = {}
+            payload = {"id": Events.next_id(), "type": payload_in.get("type", "session.updated"), "properties": payload_in.get("properties", {})}
+            Events.emit_v1(payload, payload_in.get("directory"))
+            self._json({"ok": True, "id": payload["id"]})
+            return
+        if self.path.split("?")[0] == "/__test/kill_sse":
+            n = len(Events.members)
+            Events.kill_all()
+            self._json({"ok": True, "killed": n})
+            return
         if self.path.split("?")[0] == "/__amicode_client_log":
             try:
                 with open("/tmp/e2e-client-errors.log", "ab") as f:
@@ -340,7 +354,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self._json({"healthy": True})
             return
+        # SPA fallback: deep routes (/server/.../session/..., any history
+        # URL) must serve the app shell, like the real frontdoor. A reload
+        # on a session URL 404ing here broke the reload test entirely.
+        if not re.search(r"/[^/]*\.[^/]*$", path) and not path.startswith("/assets/"):
+            self.serve_index()
+            return
         self.send_error(404)
+
+    def serve_index(self):
+        self._file(DIST / "index.html", "text/html; charset=utf-8", "no-cache")
 
     def handle_sse(self):
         self.send_response(200)
@@ -353,8 +376,23 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
         self.end_headers()
         try:
-            self.wfile.write(b"data: " + json.dumps({"type": "server.connected"}).encode() + b"\n\n")
+            # v1 wire shape: the id lets clients track Last-Event-ID
+            # (#1264) — the bare {"type":...} never advanced the cursor.
+            self.wfile.write(b"data: "
+                + json.dumps({"payload": {"id": Events.next_id(), "type": "server.connected", "properties": {}}}).encode()
+                + b"\n\n")
             self.wfile.flush()
+            # #1264: replay the gap when the client brings lastEventID
+            import urllib.parse as _up
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            last_eid = None
+            for kv in qs.split("&"):
+                if kv.startswith("lastEventID="):
+                    last_eid = _up.unquote(kv[len("lastEventID="):]) or None
+            if last_eid is not None:
+                for _, raw in Events.replay_after(last_eid):
+                    self.wfile.write(b"data: " + raw.encode() + b"\n\n")
+                self.wfile.flush()
             Events.join(self)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -394,6 +432,57 @@ class EventFan:
                 with self.lock:
                     if m in self.members:
                         self.members.remove(m)
+
+    # --- #1264: replay surface (the real frontdoor's contract). History
+    # holds id-carrying events only; reconnects with ?lastEventID=<id>
+    # get the gap replayed. Id-less frames (heartbeats) skip history.
+    HISTORY_MAX = 512
+
+    def __init__(self):
+        self.members: list = []
+        self.lock = threading.Lock()
+        self.history: list = []   # [(evt_id, frame_bytes)]
+        self.seq = 0
+
+    def next_id(self):
+        with self.lock:
+            self.seq += 1
+            return f"evt_mock_{self.seq:04d}"
+
+    def emit_v1(self, payload: dict, directory: str | None = None):
+        """Emit a wire-exact v1 event: {"directory"?, "payload": {...}}"""
+        frame = {"payload": payload}
+        if directory is not None:
+            frame["directory"] = directory
+        raw = json.dumps(frame)
+        eid = payload.get("id")
+        if eid:
+            with self.lock:
+                self.history.append((eid, raw))
+                if len(self.history) > self.HISTORY_MAX:
+                    del self.history[: len(self.history) - self.HISTORY_MAX]
+        self.broadcast(raw)
+
+    def replay_after(self, last_eid):
+        with self.lock:
+            if not self.history:
+                return []
+            index = None
+            for i, (eid, _) in enumerate(self.history):
+                if eid == last_eid:
+                    index = i
+                    break
+            items = self.history[index + 1:] if index is not None else self.history
+            return list(items)
+
+    def kill_all(self):
+        with self.lock:
+            members = list(self.members)
+        for m in members:
+            try:
+                m.connection.close()
+            except Exception:
+                pass
 
 
 Events = EventFan()
