@@ -289,16 +289,17 @@ def run(debug_port, app_port, latency_ms):
     if not send_ok:
         raise AssertionError("optimistic send did not render within 1s")
 
-    # Flow 5 (#1294 the shrink fix): empty the CURRENT session's message
-    # list via SSE message.removed events — exactly the store state the
-    # real hub's live SSE produces (emptied-but-defined) — then switch
-    # away and back through the flyout. sync() must not read the shrunk
-    # list as a cache hit; the history must reload.
-    shrink_ok = False
+    # Flow 5 (removal semantics): SSE message.removed events empty a
+    # session's message list — and the app must HONOR the removals: a
+    # refetch must not resurrect server-removed messages (the standing
+    # removed-set in applyMessagePage). The reverse case — history
+    # vanishing on tab switches — was the eviction fight, fixed by the
+    # cache-limit raise + open-tab pinning + the 60s warm window.
+    removal_ok = False
     try:
         cur = d.ev(r"""location.pathname.match(/session\/([^/?]+)/)?.[1]""")
         if not cur:
-            raise AssertionError(f"not on a session route for the shrink test (url={d.ev('location.pathname')})")
+            raise AssertionError(f"not on a session route for the removal test (url={d.ev('location.pathname')})")
         before = d.ev("document.body.innerText.includes('assistant reply 1')")
         msgs = json.load(_ur.urlopen(f"http://127.0.0.1:{app_port}/session/{cur}/message", timeout=10))
         for m in msgs:
@@ -306,24 +307,23 @@ def run(debug_port, app_port, latency_ms):
                                    "properties": {"sessionID": cur, "messageID": m["info"]["id"]}})
         time.sleep(3)
         emptied = d.ev("document.body.innerText.includes('assistant reply 1')") is False
-        # switch away and back through the flyout (the user's path)
+        # switch away and back through the flyout, then wait past a warm
+        # pass: the removed messages must NOT come back.
         d.flyout_open()
         d.flyout_click("Beta test session")
         time.sleep(4)
         d.flyout_open()
         d.flyout_click("Alpha test session")
-        for _ in range(40):
-            if d.ev("document.body.innerText.includes('assistant reply 1')"):
-                shrink_ok = True
-                break
-            time.sleep(0.5)
-        print(f"  shrink: session={cur[-16:]} before={before} emptied={emptied} recovered={shrink_ok} -> {'OK' if shrink_ok else 'FAIL'}")
+        time.sleep(12)
+        stayed_removed = d.ev("document.body.innerText.includes('assistant reply 1')") is False
+        removal_ok = emptied and stayed_removed
+        print(f"  removal: session={cur[-16:]} before={before} emptied={emptied} stayed_removed={stayed_removed} -> {'OK' if removal_ok else 'FAIL'}")
         if before is False:
-            print("  shrink: WARNING baseline had no content — marker invalid")
+            print("  removal: WARNING baseline had no content — marker invalid")
     except Exception as e:
-        print(f"  shrink: ERROR {e}")
-    if not shrink_ok:
-        raise AssertionError("#1294: shrunk session history never recovered on switch-back")
+        print(f"  removal: ERROR {e}")
+    if not removal_ok:
+        raise AssertionError("removal semantics violated: removed messages resurrected (or never removed)")
 
     total_blank, events = d.blank_ms()
     verdict = "PASS"
