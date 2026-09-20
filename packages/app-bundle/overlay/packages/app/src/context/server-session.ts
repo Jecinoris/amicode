@@ -915,6 +915,13 @@ export function createServerSession(
         if (item.parts.length) setData("part", item.info.id, item.parts.slice())
       }
       if (record.source.length) setData("session_message", sessionID, record.source.slice())
+      // #1294: mark the hydrated page as APPLIED — sync()'s cache check
+      // requires meta.limit, and without this a mirror-hydrated session
+      // (40 messages on screen) still failed the check and re-fetched on
+      // every switch: the timeline held the frozen previous-session clone
+      // for a full wire round-trip while the same data came back.
+      setMeta("limit", sessionID, record.messages.length)
+      setMeta("at", sessionID, Date.now())
     })
   }
 
