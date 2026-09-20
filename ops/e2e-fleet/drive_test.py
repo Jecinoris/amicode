@@ -134,6 +134,17 @@ class Driver:
             time.sleep(2)
         return "draftId" in str(self.ev("location.href"))
 
+    def flyout_open(self):
+        for _ in range(10):
+            ok = self.ev(r"""(() => { const b = Array.from(document.querySelectorAll('button')).find(x => ((x.getAttribute('aria-label')||'')+(x.innerText||'')).includes('Sessions')); if(b){b.click(); return true} return false })()""")
+            if ok and self.ev(r"""document.querySelectorAll('[data-component="session-dropdown-row"]').length > 0"""):
+                return True
+            time.sleep(1)
+        return False
+
+    def flyout_click(self, title):
+        return self.ev(r"""(() => { const rows = Array.from(document.querySelectorAll('[data-component="session-dropdown-row"]')); for (const r of rows) { if ((r.innerText||'').trim().startsWith('""" + title + r"""')) { r.click(); return 'ok' } } return 'missing' })()""")
+
     def open_sessions_view(self):
         """The titlebar buttons are aria-labeled, not text-labeled."""
         return self.ev(r"""(() => { const b = Array.from(document.querySelectorAll('button')).find(x => ((x.getAttribute('aria-label')||'') + (x.innerText||'')).includes('Sessions')); if(b){b.click(); return true} return false })()""")
@@ -277,6 +288,42 @@ def run(debug_port, app_port, latency_ms):
             print("  optimistic-send: text never rendered (or > 1s)")
     if not send_ok:
         raise AssertionError("optimistic send did not render within 1s")
+
+    # Flow 5 (#1294 the shrink fix): empty the CURRENT session's message
+    # list via SSE message.removed events — exactly the store state the
+    # real hub's live SSE produces (emptied-but-defined) — then switch
+    # away and back through the flyout. sync() must not read the shrunk
+    # list as a cache hit; the history must reload.
+    shrink_ok = False
+    try:
+        cur = d.ev(r"""location.pathname.match(/session\/([^/?]+)/)?.[1]""")
+        if not cur:
+            raise AssertionError(f"not on a session route for the shrink test (url={d.ev('location.pathname')})")
+        before = d.ev("document.body.innerText.includes('assistant reply 1')")
+        msgs = json.load(_ur.urlopen(f"http://127.0.0.1:{app_port}/session/{cur}/message", timeout=10))
+        for m in msgs:
+            _post("/__test/emit", {"type": "message.removed", "directory": "/home/aaron/test-project",
+                                   "properties": {"sessionID": cur, "messageID": m["info"]["id"]}})
+        time.sleep(3)
+        emptied = d.ev("document.body.innerText.includes('assistant reply 1')") is False
+        # switch away and back through the flyout (the user's path)
+        d.flyout_open()
+        d.flyout_click("Beta test session")
+        time.sleep(4)
+        d.flyout_open()
+        d.flyout_click("Alpha test session")
+        for _ in range(40):
+            if d.ev("document.body.innerText.includes('assistant reply 1')"):
+                shrink_ok = True
+                break
+            time.sleep(0.5)
+        print(f"  shrink: session={cur[-16:]} before={before} emptied={emptied} recovered={shrink_ok} -> {'OK' if shrink_ok else 'FAIL'}")
+        if before is False:
+            print("  shrink: WARNING baseline had no content — marker invalid")
+    except Exception as e:
+        print(f"  shrink: ERROR {e}")
+    if not shrink_ok:
+        raise AssertionError("#1294: shrunk session history never recovered on switch-back")
 
     total_blank, events = d.blank_ms()
     verdict = "PASS"
