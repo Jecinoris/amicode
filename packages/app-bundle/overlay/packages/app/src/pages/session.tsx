@@ -769,9 +769,28 @@ export default function Page() {
     // empty list that has NEVER been fetched is not ready (it rendered an
     // empty timeline: "the session history is missing until it comes
     // back"). Hold the frozen view until the real history loads.
-    if (!serverSync().session.loaded(id)) return false
-    return messagesReady()
+    if (!serverSync().session.loaded(id)) {
+      gateDebug(id, "not-loaded", { count })
+      return false
+    }
+    const ready = messagesReady()
+    if (!ready) gateDebug(id, "messages-not-ready", { count, loading: historyLoading() })
+    return ready
   })
+
+  /** #1294 diagnostic: WHY the timeline gate holds, per session — bounded
+   *  ring, read via window.__gateDebug from the e2e rig. */
+  const gateDebug = (id: string, reason: string, detail: Record<string, unknown>) => {
+    const w = globalThis as { __gateDebug?: Map<string, unknown[]> }
+    w.__gateDebug = w.__gateDebug ?? new Map()
+    const ring = w.__gateDebug.get(id) ?? []
+    const last = ring[ring.length - 1] as { reason: string } | undefined
+    if (last?.reason !== reason) {
+      ring.push({ reason, ...detail, t: Date.now() })
+      if (ring.length > 12) ring.shift()
+      w.__gateDebug.set(id, ring)
+    }
+  }
   const sessionSync = timeline.resource
   const userMessages = timeline.userMessages
   const visibleUserMessages = timeline.visibleUserMessages

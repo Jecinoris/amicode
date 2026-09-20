@@ -745,7 +745,9 @@ export function createServerSession(
     // fetch so the timeline renders instantly; the fetch (which continues
     // below) reconciles into truth. Only the FIRST load of a session this
     // document hydrates; later loads have data.message defined already.
-    if (data.message[sessionID] === undefined) {
+    if ((data.message[sessionID]?.length ?? 0) === 0) {
+      // #1294: hydrate empty-OR-missing lists — an SSE-emptied session
+      // renders its mirror content instantly while the wire revalidates.
       await hydrateFromMirror(sessionID).catch(() => {})
       if (meta.loading[sessionID]) return
     }
@@ -882,9 +884,11 @@ export function createServerSession(
    *  (background revalidate, not a cache hit). */
   const hydrateFromMirror = async (sessionID: string) => {
     const scope = options?.mirrorScope
-    if (!scope || data.message[sessionID] !== undefined) return
+    // #1294: also hydrate EMPTY-but-defined lists (SSE-emptied sessions) —
+    // but never overwrite a non-empty list with mirror content.
+    if (!scope || (data.message[sessionID]?.length ?? 0) > 0) return
     const record = await loadMirror(scope, sessionID)
-    if (!record || data.message[sessionID] !== undefined) return
+    if (!record || (data.message[sessionID]?.length ?? 0) > 0) return
     ;(globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated = (
       (globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated ?? []
     ).concat([sessionID])
@@ -901,7 +905,18 @@ export function createServerSession(
   const sync = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) => {
     touch(sessionID)
     return runInflight(inflight, sessionID, async () => {
-      const cached = data.message[sessionID] !== undefined && meta.limit[sessionID] !== undefined
+      // #1294: a session whose message list SHRANK below its last applied
+      // page must NOT read as a cache hit. SSE event reducers can empty a
+      // list or seed it with just the latest message(s) between warm
+      // passes; the old check (defined + limit) treated those as cached,
+      // sync() early-returned, and NOTHING ever reloaded — a switch
+      // rendered an empty or truncated timeline until the next warm pass
+      // happened to refresh it ("the session history is missing until it
+      // comes back"). meta.limit stores the APPLIED count, so
+      // count >= limit means the real page is still intact.
+      const count = data.message[sessionID]?.length ?? 0
+      const cached =
+        count > 0 && meta.limit[sessionID] !== undefined && count >= (meta.limit[sessionID] ?? 0)
       if (cached && data.info[sessionID] && !options?.force) return
       await Promise.all([
         resolve(sessionID, options),
@@ -916,6 +931,9 @@ export function createServerSession(
     touch(sessionID)
     await inflight.get(sessionID)
     if (
+      // #1294: an empty list is never "fresh enough" — the SSE reducers
+      // can empty a warmed session; the next warm pass must re-pull it.
+      (data.message[sessionID]?.length ?? 0) > 0 &&
       Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
       (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
     )
