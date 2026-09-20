@@ -48,6 +48,7 @@
 // construction (amico.ts prints `VerbResult.json`), exactly like the other spine verbs.
 import { FRONTIER_MODELS, ladderRungs } from "./ledger_dispatch.js";
 import { fleetDigest } from "./fleet_digest.js";
+import { shardWatch } from "./shard_watch.js";
 // The fleet-authority projection status (#1068, rearchitect P3b-1): the same
 // `amico fleet status` verb, one more read path — `--projection` routes to the
 // entitlement-gated publisher invocation + the shared reader, while the
@@ -592,7 +593,8 @@ const USAGE =
   'amico fleet finish --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]  |  ' +
   "amico fleet enroll --as-server [--host H --port N --ssh-alias A --transport-hint T]  |  " +
   "amico fleet enroll --join-token <path>  |  " +
-  "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]";
+  "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]  |  " +
+  "amico fleet shard-watch [--clients a,b] [--port <p>] [--alert-min <n>] [--db <path>] [--post <ch>] [--dry-run]";
 
 /** Optional injection surface for the fleet verb's sub-verbs — the projection
  *  status's hermetic seam (publisher subprocess, entitlement file, checkout
@@ -619,6 +621,7 @@ export function fleetVerb(argv: string[], deps: FleetVerbDeps = {}): VerbResult 
   if (sub === "launch") return fleetLaunch(rest);
   if (sub === "finish") return fleetFinish(rest);
   if (sub === "digest") return fleetDigest(rest);
+  if (sub === "shard-watch") return shardWatch(rest);
   // NOTE: `enroll` is async (real HTTP) and is dispatched at the registry seam
   // (verbs.ts `run`), NOT here — so this synchronous router stays synchronous
   // and its pinned VerbResult contract (and callers) are untouched.
