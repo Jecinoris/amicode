@@ -265,7 +265,21 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_sse()
             return
         if v2 and path == "/session" and "limit" in raw:
-            self._json({"data": SESSIONS, "cursor": {"next": None, "previous": None}})
+            # #1294c: serve the REAL v2 list shape (location:{directory},
+            # no top-level directory/slug) — the fixture captured from the
+            # live hub. The mock's friendlier top-level shape let a raw-
+            # remember crash pass the rig while the real panel crashed.
+            import copy
+            real_shaped = []
+            for s in SESSIONS:
+                r = dict(s)
+                r.pop("directory", None)
+                r.pop("path", None)
+                r.pop("slug", None)
+                r["location"] = {"directory": s.get("directory", "/home/aaron/test-project")}
+                r.setdefault("model", {"id": "jev-1.13-free", "providerID": "opencode", "variant": "default"})
+                real_shaped.append(r)
+            self._json({"data": real_shaped, "cursor": {"next": None, "previous": None}})
             return
         if v2 and path == "/session/active":
             self._json({"data": {}})
