@@ -946,17 +946,24 @@ export function createServerSession(
   const prefetch = async (sessionID: string, limit: number) => {
     touch(sessionID)
     await inflight.get(sessionID)
+    const count = data.message[sessionID]?.length ?? 0
     if (
       // #1294: an empty list is never "fresh enough" — the SSE reducers
       // can empty a warmed session; the next warm pass must re-pull it.
-      // The window is 60s against a 20s pass interval: at 15s the guard
-      // never held and every pass re-fetched all 30 warmed sessions over
-      // the wire (600 messages/pass, pure churn). The SSE reducers keep
-      // live sessions current; the warm pass is a reconciliation
+      // A COMPLETE session (the whole history fits one page) with data
+      // never re-prefetches: the ring data showed 3-message sessions
+      // re-fetched every ~80s forever (30 sessions of pure wire churn —
+      // the SSE reducers keep them current). Incomplete ones re-pull
+      // after the 60s window. The warm pass is a reconciliation
       // backstop, not the freshness mechanism.
-      (data.message[sessionID]?.length ?? 0) > 0 &&
-      Date.now() - (meta.at[sessionID] ?? 0) <= 60_000 &&
-      (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
+      count > 0 &&
+      // #1294 final: the ring data showed the three long incomplete sessions
+      // (31/40/41 messages, done=False) still re-fetched every ~80s — the
+      // 60s window was the last refetch trigger left. Any session holding a
+      // full page never re-prefetches: the SSE reducers keep live sessions
+      // current, history deepens on demand, and the boot deep-warm covers
+      // depth once per document.
+      (meta.complete[sessionID] || count >= limit)
     )
       return
     await runInflight(inflight, sessionID, () => loadMessages(sessionID, limit))

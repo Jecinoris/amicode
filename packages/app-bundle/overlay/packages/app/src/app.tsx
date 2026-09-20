@@ -65,6 +65,7 @@ import { SettingsProvider, useSettings } from "@/context/settings"
 import { TabsProvider, tabHref, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
+import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
@@ -561,6 +562,18 @@ function HoldDebugBadge() {
     const current = (server as unknown as { current?: { http?: { url?: string } } }).current
     return current?.http?.url ?? location.origin
   }
+  // #1294: the local service in fleet mode authenticates every request
+  // (per-boot Basic) — the frontdoor never did, which is why the shipper
+  // silently 401'd on the real panel while working against the mock/rig.
+  const dataAuth = () => {
+    const current = (server as unknown as { current?: { username?: string; password?: string } }).current
+    if (!current?.password) return undefined
+    try {
+      return authTokenFromCredentials({ username: current.username, password: current.password })
+    } catch {
+      return undefined
+    }
+  }
   {
     // #1290: Solid routes unhandled reactive errors through console.error,
     // NOT window.onerror — the teardown error behind the blank was never
@@ -578,7 +591,9 @@ function HoldDebugBadge() {
         // fleet tunnel / the engine itself) — a simple text/plain POST so
         // no CORS preflight is required; the frontdoor logs it regardless.
         const target = new URL("/__amicode_client_log", dataUrl())
+        const auth = dataAuth()
         void fetch(target, {
+          headers: auth ? { Authorization: `Basic ${auth}` } : {},
           method: "POST",
           body: `${kind} ${build}\n${text.slice(0, 600)}`,
         }).catch(() => {})
@@ -610,6 +625,51 @@ function HoldDebugBadge() {
       .map((r) => r.name)
       .find((n) => n.includes("index-") && n.endsWith(".js"))
     const build = entry ? entry.split("/").pop()!.replace("index-", "").replace(".js", "") : "?"
+
+    // #1294 diagnosis-at-distance: the harness rig cannot reproduce the
+    // live-SSE conditions of the real panel, and asking the user to read
+    // console rings mid-lag is the wrong ergonomics. Ship the diagnostic
+    // rings to the hub's client log on an interval — the panel self-
+    // reports what its loads/gates/mirror did, and the log is read
+    // remotely. Strips together with the badge once trusted.
+    const diagStart = Date.now()
+    const postRaw = (kind: string, text: string) => {
+      try {
+        const target = new URL("/__amicode_client_log", dataUrl())
+        const auth = dataAuth()
+        void fetch(target, { method: "POST", headers: auth ? { Authorization: `Basic ${auth}` } : {}, body: `${kind} ${build}
+${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots mid-JSON
+      } catch {}
+    }
+    const briefMap = (m?: Map<string, unknown[]>) =>
+      m
+        ? Object.fromEntries(
+            [...m.entries()].slice(-4).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
+          )
+        : null
+    const shipRings = () => {
+      try {
+        const w = globalThis as {
+          __loadDebug?: Map<string, unknown[]>
+          __gateDebug?: Map<string, unknown[]>
+          __mirrorDebug?: unknown[]
+          __mirrorHydrated?: string[]
+        }
+        postRaw(
+          "D",
+          JSON.stringify({
+            url: location.pathname.slice(-46),
+            up: Math.round((Date.now() - diagStart) / 1000),
+            load: briefMap(w.__loadDebug),
+            gate: briefMap(w.__gateDebug),
+            mirror: w.__mirrorDebug?.slice(-4) ?? null,
+            hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
+          }),
+        )
+      } catch {}
+    }
+    setTimeout(shipRings, 8_000)
+    setInterval(shipRings, 30_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
