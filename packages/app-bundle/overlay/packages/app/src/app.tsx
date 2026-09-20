@@ -36,6 +36,7 @@ import {
   type JSX,
   lazy,
   onCleanup,
+  onMount,
   type ParentProps,
   Show,
   Suspense,
@@ -663,6 +664,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
+            hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
             hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
           }),
@@ -690,9 +692,16 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
           renderId = (path.match(/session\/([^/?]+)/)?.[1] ?? "").slice(-14)
         }
         if (renderT0 > 0) {
-          const els = document.querySelectorAll(
-            '[data-slot*=user-message], [data-slot*=assistant-message], [data-component*=message]',
-          ).length
+          // #1297: EXCLUDE the hold clone — its message elements are the
+          // PREVIOUS session's frozen pixels (the "0ms" measurements were
+          // the hold painting, not the new session). True first paint =
+          // message elements present AND no hold overlay mounted.
+          const held = document.querySelector("[data-amicode-hold]") !== null
+          const els = held
+            ? 0
+            : document.querySelectorAll(
+                '[data-slot*=user-message], [data-slot*=assistant-message], [data-component*=message]',
+              ).length
           if (els > 0) {
             renderRing.push({ id: renderId, ms: Math.round(performance.now() - renderT0), els })
             if (renderRing.length > 24) renderRing.shift()
@@ -1182,7 +1191,7 @@ export function AppInterface(props: {
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
                               <ErrorBoundary fallback={() => <SessionPanelHold />}>
-                                <Suspense fallback={() => <SessionPanelHold />}>
+                                <Suspense fallback={() => <SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>
@@ -1316,6 +1325,24 @@ function NewSessionLanding() {
 function LandingEffect(props: { land: () => void }) {
   createEffect(() => props.land())
   return null
+}
+
+/** #1297: stamp the outlet-Suspense fallback's mounts — the frozen pane
+ *  the user keeps seeing on quick switches. The durations ride the ring
+ *  snapshots; correlated with the frontdoor log they name the suspender. */
+function SuspenseHoldProbe() {
+  const w = globalThis as { __holdRing?: { at: number; ms: number | null }[] }
+  const at = Date.now()
+  onMount(() => {
+    w.__holdRing = w.__holdRing ?? []
+    w.__holdRing.push({ at, ms: null })
+    if (w.__holdRing.length > 16) w.__holdRing.shift()
+    const mine = w.__holdRing[w.__holdRing.length - 1]
+    onCleanup(() => {
+      mine.ms = Date.now() - at
+    })
+  })
+  return <SessionPanelHold />
 }
 
 function NewLayoutLegacySessionRedirect() {
