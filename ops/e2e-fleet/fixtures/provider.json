@@ -1,0 +1,1 @@
+{"location":{"directory":"/tmp/amicode-service-runner-engine-oD3Eb3","project":{"id":"global","directory":"/"}},"data":[{"id":"opencode","name":"OpenCode Zen","api":{"type":"aisdk","package":"@ai-sdk/openai-compatible","url":"https://opencode.ai/zen/v1"},"request":{"headers":{},"body":{"apiKey":"public"}}}]}
