@@ -752,6 +752,23 @@ export default function Page() {
   const hadTimelineMessages = new Map<string, boolean>()
   const emptiedAt = new Map<string, number>()
   const EMPTY_GRACE_MS = 3_000
+  /** #1294 diagnostic: WHY the timeline gate holds, per session — bounded
+   *  ring, read via window.__gateDebug from the e2e rig. (Must live BEFORE
+   *  timelineGateReady: createMemo evaluates eagerly at setup — a forward
+   *  const reference is a TDZ ReferenceError at render, the exact trap
+   *  messagesReady's comment above warns about.) */
+  const gateDebug = (id: string, reason: string, detail: Record<string, unknown>) => {
+    const w = globalThis as { __gateDebug?: Map<string, unknown[]> }
+    w.__gateDebug = w.__gateDebug ?? new Map()
+    const ring = w.__gateDebug.get(id) ?? []
+    const last = ring[ring.length - 1] as { reason: string } | undefined
+    if (last?.reason !== reason) {
+      ring.push({ reason, ...detail, t: Date.now() })
+      if (ring.length > 12) ring.shift()
+      w.__gateDebug.set(id, ring)
+    }
+  }
+
   const timelineGateReady = createMemo(() => {
     const id = params.id
     if (!id) return messagesReady()
@@ -778,19 +795,6 @@ export default function Page() {
     return ready
   })
 
-  /** #1294 diagnostic: WHY the timeline gate holds, per session — bounded
-   *  ring, read via window.__gateDebug from the e2e rig. */
-  const gateDebug = (id: string, reason: string, detail: Record<string, unknown>) => {
-    const w = globalThis as { __gateDebug?: Map<string, unknown[]> }
-    w.__gateDebug = w.__gateDebug ?? new Map()
-    const ring = w.__gateDebug.get(id) ?? []
-    const last = ring[ring.length - 1] as { reason: string } | undefined
-    if (last?.reason !== reason) {
-      ring.push({ reason, ...detail, t: Date.now() })
-      if (ring.length > 12) ring.shift()
-      w.__gateDebug.set(id, ring)
-    }
-  }
   const sessionSync = timeline.resource
   const userMessages = timeline.userMessages
   const visibleUserMessages = timeline.visibleUserMessages
