@@ -738,8 +738,21 @@ export function createServerSession(
     })
   }
 
+  const loadDebug = (sessionID: string, step: string, detail: Record<string, unknown> = {}) => {
+    const w = globalThis as { __loadDebug?: Map<string, unknown[]> }
+    w.__loadDebug = w.__loadDebug ?? new Map()
+    const ring = w.__loadDebug.get(sessionID) ?? []
+    ring.push({ step, ...detail, t: Date.now() })
+    if (ring.length > 16) ring.shift()
+    w.__loadDebug.set(sessionID, ring)
+  }
+
   const loadMessages = async (sessionID: string, limit: number, before?: string, mode?: "replace" | "prepend") => {
-    if (meta.loading[sessionID]) return
+    loadDebug(sessionID, "enter", { limit, mode: mode ?? "latest", loading: meta.loading[sessionID] ?? false, count: data.message[sessionID]?.length ?? -1 })
+    if (meta.loading[sessionID]) {
+      loadDebug(sessionID, "skip-loading")
+      return
+    }
     // #1291 durable mirror: EVERY cold path funnels here — sync(), the
     // warm's prefetch(), history loads. Hydrate from disk BEFORE the wire
     // fetch so the timeline renders instantly; the fetch (which continues
@@ -749,6 +762,7 @@ export function createServerSession(
       // #1294: hydrate empty-OR-missing lists — an SSE-emptied session
       // renders its mirror content instantly while the wire revalidates.
       await hydrateFromMirror(sessionID).catch(() => {})
+      loadDebug(sessionID, "hydrated", { count: data.message[sessionID]?.length ?? -1 })
       if (meta.loading[sessionID]) return
     }
     const active = generation(sessionID)
@@ -770,6 +784,7 @@ export function createServerSession(
     let applied = false
     try {
       const page = await fetchMessages(sessionID, limit, before, () => resetMessageLoad(sessionID, load))
+      loadDebug(sessionID, "fetched", { n: page.session.length, complete: page.complete, before: before ?? null })
       const first = page.session.reduce<Message | undefined>(
         (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
         undefined,
@@ -838,6 +853,7 @@ export function createServerSession(
         mode !== "prepend",
       )
       applied = true
+      loadDebug(sessionID, "applied", { n: data.message[sessionID]?.length ?? -1 })
       // #1291 durable mirror: a successful load (open / switch / warm
       // prefetch / older-page fetch) is the natural persistence point.
       persistMirror(sessionID)
@@ -933,8 +949,13 @@ export function createServerSession(
     if (
       // #1294: an empty list is never "fresh enough" — the SSE reducers
       // can empty a warmed session; the next warm pass must re-pull it.
+      // The window is 60s against a 20s pass interval: at 15s the guard
+      // never held and every pass re-fetched all 30 warmed sessions over
+      // the wire (600 messages/pass, pure churn). The SSE reducers keep
+      // live sessions current; the warm pass is a reconciliation
+      // backstop, not the freshness mechanism.
       (data.message[sessionID]?.length ?? 0) > 0 &&
-      Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
+      Date.now() - (meta.at[sessionID] ?? 0) <= 60_000 &&
       (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
     )
       return

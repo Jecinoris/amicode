@@ -676,6 +676,35 @@ function HoldDebugBadge() {
 function SessionLineagePrewarmer() {
   const global = useGlobal()
   const tabs = useTabs()
+  // #1294: pin OPEN TABS for their lifetime — the route-level pin unpins
+  // the session the moment you switch away, and without a pin the cache
+  // evictor can drop an idle tab's message data between warm passes
+  // (making every back-and-forth switch a cold wire reload). Track our
+  // pins locally so each tab session is pinned exactly once and unpinned
+  // when its tab closes.
+  const pinnedTabs = new Map<string, (sessionID: string) => void>()
+  const resolveTabSession = (tab: { server?: string; sessionId: string }) => {
+    const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
+    return conn ? global.ensureServerCtx(conn).sync?.session : undefined
+  }
+  createEffect(() => {
+    const open = new Set<string>()
+    for (const tab of tabs.store) {
+      if (tab.type !== "session") continue
+      open.add(tab.sessionId)
+      const session = resolveTabSession(tab)
+      if (session && !pinnedTabs.has(tab.sessionId)) {
+        pinnedTabs.set(tab.sessionId, (id) => session.unpin(id))
+        session.pin(tab.sessionId)
+      }
+    }
+    for (const [sessionID, unpin] of pinnedTabs) {
+      if (!open.has(sessionID)) {
+        pinnedTabs.delete(sessionID)
+        unpin(sessionID)
+      }
+    }
+  })
   createEffect(() => {
     for (const tab of tabs.store) {
       if (tab.type !== "session") continue
