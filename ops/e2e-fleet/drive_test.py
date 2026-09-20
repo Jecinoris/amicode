@@ -252,6 +252,32 @@ def run(debug_port, app_port, latency_ms):
     if not retitled:
         raise AssertionError("#1264 replay did not deliver the gap event (no retitle)")
 
+    # Flow 4 (optimistic send): submit through the real input pipeline on
+    # the session view and assert the sent text renders in the timeline
+    # within 1s — the optimistic store must beat the 800ms wire RTT.
+    send_ok = False
+    if "/session/" in str(d.ev("location.pathname")):
+        marker = f"optimistic send check {int(time.time())}"
+        d.ev(r"""document.querySelector('[data-component="prompt-input"]')?.focus()""")
+        d.send("Input.insertText", {"text": marker})
+        time.sleep(0.4)
+        d.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
+        d.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13})
+        t0 = time.time()
+        # the composer clears on submit — poll for the timeline copy
+        time.sleep(0.25)
+        while time.time() - t0 < 10:
+            if d.ev("document.body.innerText.includes('" + marker + "')"):
+                send_ms = time.time() - t0
+                send_ok = send_ms < 1.0
+                print(f"  optimistic-send: rendered in {send_ms:.2f}s -> {'OK' if send_ok else 'TOO SLOW'}")
+                break
+            time.sleep(0.05)
+        if not send_ok:
+            print("  optimistic-send: text never rendered (or > 1s)")
+    if not send_ok:
+        raise AssertionError("optimistic send did not render within 1s")
+
     total_blank, events = d.blank_ms()
     verdict = "PASS"
     if total_blank > BLANK_TOLERANCE_MS:

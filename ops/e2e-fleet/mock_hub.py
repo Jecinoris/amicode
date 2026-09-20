@@ -62,7 +62,11 @@ SESSIONS = [
     session("ses_test_gamma_0003", "Gamma test session", "/home/aaron/test-project"),
 ]
 BY_ID = {s["id"]: s for s in SESSIONS}
+# appended by the draft-flow POST handlers (live-created sessions/messages)
 
+
+
+EXTRA_MESSAGES: dict = {}
 
 def messages_for(id_: str) -> list:
     # Shape captured from the real hub: [{info: {..., id, sessionID, role,
@@ -110,6 +114,8 @@ def messages_for(id_: str) -> list:
                 {"type": "text", "text": f"assistant reply {i}", "id": f"prt_asst_{i:04d}", "sessionID": id_, "messageID": asst_id},
             ],
         })
+    # Live-sent messages (draft-flow /prompt handler) land after the scripted ones.
+    out.extend(EXTRA_MESSAGES.get(id_, []))
     return out
 
 
@@ -187,6 +193,52 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        # Draft flow (first message in a new chat): create the session
+        # for real, then let /prompt land the user message + emit the
+        # events the app's stream applies.
+        if re.match(r"^/session(\?|$)", self.path):
+            try:
+                params_in = json.loads(body.decode() or "{}")
+            except Exception:
+                params_in = {}
+            directory = params_in.get("directory", "/home/aaron/test-project")
+            new_id = f"ses_mock_{len(SESSIONS) + 1:04d}"
+            info = {
+                "id": new_id,
+                "slug": f"mock-{len(SESSIONS) + 1}",
+                "projectID": "global",
+                "directory": directory,
+                "path": directory,
+                "title": params_in.get("title") or "",
+                "time": {"created": int(time.time() * 1000), "updated": int(time.time() * 1000)},
+            }
+            SESSIONS.append(info)
+            BY_ID[new_id] = info
+            Events.emit_v1({"id": Events.next_id(), "type": "session.created", "properties": {"info": info}}, directory)
+            self._json(info)
+            return
+        if m := re.match(r"^/session/([^/]+)/prompt$", self.path):
+            sid = m.group(1)
+            try:
+                params_in = json.loads(body.decode() or "{}")
+            except Exception:
+                params_in = {}
+            text_out = "\n".join(p.get("text", "") for p in params_in.get("parts", []) if p.get("type") == "text") or "sent"
+            directory = (BY_ID.get(sid) or {}).get("directory", "/home/aaron/test-project")
+            user_id = f"{sid}_user_{int(time.time() * 1000) % 100000}"
+            EXTRA_MESSAGES.setdefault(sid, []).append({
+                "info": {"id": user_id, "sessionID": sid, "role": "user", "agent": "plan",
+                         "model": {"id": "mock-model", "providerID": "mock", "variant": "default"},
+                         "time": {"created": int(time.time() * 1000)}},
+                "parts": [{"type": "text", "text": text_out, "id": f"{user_id}_p", "sessionID": sid, "messageID": user_id}],
+            })
+            Events.emit_v1({"id": Events.next_id(), "type": "message.updated",
+                            "properties": {"info": {"id": user_id, "sessionID": sid, "role": "user",
+                                                    "agent": "plan", "time": {"created": int(time.time() * 1000)}}}}, directory)
+            Events.emit_v1({"id": Events.next_id(), "type": "session.updated",
+                            "properties": {"info": {**BY_ID.get(sid, {}), "title": text_out[:32]}}}, directory)
+            self._json({"id": user_id, "ok": True})
+            return
         if m := re.match(r"^/session/([^/]+)/message$", self.path):
             # Scripted send: emit an assistant reply on the SSE stream.
             text = json.loads(body or b"{}").get("prompt", "sent")
@@ -260,7 +312,11 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_sse()
             return
         if path == "/global/config":
-            self._json({"default_agent": "plan", "theme": "opencode"})
+            # Real shape (live hub): the "model" field is the default
+            # model as "provider/modelID" — the draft composer resolves its
+            # default model chip from here; without it the submit is gated
+            # behind "Select model" and no send ever fires.
+            self._json({"$schema": "https://opencode.ai/config.json", "model": "opencode/jev-1.13-free", "provider": {}})
             return
         if path == "/provider":
             self._json([{"id": "mock", "env": {"MOCK": "1"}}])
