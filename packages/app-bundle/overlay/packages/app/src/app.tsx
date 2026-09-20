@@ -717,6 +717,12 @@ function SessionLineagePrewarmer() {
       if (session.lineage && !session.lineage.peek(tab.sessionId)) {
         void session.lineage.resolve(tab.sessionId).catch(() => {})
       }
+      // #1294c: also seed data.info for open tabs — tabs can reference
+      // sessions outside the 30-recent warm window; resolve() is
+      // promise-deduped so this is one background fetch per tab per boot.
+      if (session.resolve) {
+        void session.resolve(tab.sessionId).catch(() => {})
+      }
       // Messages too: the timeline gates on the sync store holding the
       // session's messages — a cold message load is the same wire gap.
       if (session.prefetch) {
@@ -747,7 +753,12 @@ function SessionLineagePrewarmer() {
       try {
         const ctx = global.ensureServerCtx(conn)
         const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
-        recent = (page.data?.data ?? []).filter((info): info is { id: string } => typeof info?.id === "string")
+        // #1294c: keep the FULL session objects — the warm's list response
+        // already carries them, and seeding data.info here is what lets
+        // sync()'s cache check early-return on a switch. Without it, a
+        // warmed+cached session still fetched its info on every switch
+        // (wire RTT), and the outlet Suspense held the panel for it.
+        recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
         ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
           n: recent.length,
           at: Date.now(),
@@ -758,6 +769,12 @@ function SessionLineagePrewarmer() {
         continue
       }
       for (const info of recent) {
+        // #1294c: seed data.info from the list payload — zero wire cost.
+        try {
+          sync.session.remember(info)
+        } catch {
+          /* best-effort */
+        }
         if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
           void sync.session.lineage.resolve(info.id).catch(() => {})
         }
