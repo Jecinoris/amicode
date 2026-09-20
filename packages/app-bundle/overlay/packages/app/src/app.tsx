@@ -7,7 +7,6 @@ import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { File } from "@opencode-ai/session-ui/file"
-import { handleSyntaxThemeMessage } from "@opencode-ai/session-ui/v2/shiki-theme-state"
 import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider, useTheme } from "@opencode-ai/ui/theme/context"
@@ -42,6 +41,7 @@ import {
   Show,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { Spinner } from "@opencode-ai/ui/spinner"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { CommandProvider, useCommand, type CommandOption } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
@@ -65,6 +65,8 @@ import { SettingsProvider, useSettings } from "@/context/settings"
 import { TabsProvider, tabHref, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
+import { authTokenFromCredentials } from "@/utils/server"
+import { normalizeSessionInfo } from "@/utils/session"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import LegacyLayout from "@/pages/layout"
@@ -76,14 +78,33 @@ import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref }
 import { createSessionLineage } from "@/pages/session/session-lineage"
 import { bugDockController } from "@/pages/session/composer/bug-dock-controller"
 import { postBugReportPoke } from "@/utils/amicode-bug-report"
-import { adoptExplorerIconTheme } from "@/utils/vscode-explorer-icon-theme"
 
-import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
+import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, registerHeldPanelView, heldPanelViewState, SessionPanelHold } from "@/pages/session"
 import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
+
+// #1290: the notorious ResizeObserver-loop exception is thrown at the end of
+// any frame whose resize callbacks changed layout. Benign in most apps — but
+// over remote links it lands inside Solid's keyed-Show transition frames
+// (route/provider tree swaps on switch/send/question/response), aborting the
+// new children mid-creation: the outlet renders NOTHING (main:0 / now:none /
+// p0, no reload, correct URL) until the next update re-renders. The
+// capture-phase suppression is the standard mitigation.
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "error",
+    (e) => {
+      if (typeof e.message === "string" && e.message.includes("ResizeObserver loop")) {
+        e.stopImmediatePropagation()
+        e.preventDefault()
+      }
+    },
+    true,
+  )
+}
 
 const SessionRoute = () => {
   const settings = useSettings()
@@ -124,8 +145,22 @@ const SessionRoute = () => {
 function TargetServerRoute(props: ParentProps) {
   const params = useParams<{ serverKey: string; id: string }>()
   const global = useGlobal()
+  // #1290: requireServerKey THROWS on a transiently-invalid param — a throw
+  // inside the keyed Show's `when` during a route re-match tears the whole
+  // server-scoped tree to an EMPTY outlet (now:none / p0 — the blank on
+  // question, response, and session-switch). Catch the transient: the key
+  // memo reads undefined, the Show renders the frozen hold, and the real
+  // tree returns the moment the params settle.
+  const serverKey = createMemo(() => {
+    try {
+      return requireServerKey(params.serverKey)
+    } catch {
+      return undefined
+    }
+  })
   const conn = createMemo(() => {
-    const key = requireServerKey(params.serverKey)
+    const key = serverKey()
+    if (!key) return undefined
     return global.servers.list().find((item) => ServerConnection.key(item) === key)
   })
 
@@ -133,7 +168,7 @@ function TargetServerRoute(props: ParentProps) {
     // Owns the server-identity remount. Session changes must NOT remount this
     // subtree (SessionRouteErrorBoundary resets and createSessionLineage
     // re-resolves reactively instead); both rely on this key for server changes.
-    <Show when={requireServerKey(params.serverKey)} keyed>
+    <Show when={serverKey()} keyed fallback={<SessionPanelHold />}>
       <ServerSDKProvider server={conn}>
         <ServerSyncProvider server={conn}>{props.children}</ServerSyncProvider>
       </ServerSDKProvider>
@@ -173,7 +208,11 @@ function LegacyTargetSessionRedirect() {
     navigate(legacySessionHref(directory, params.id), { replace: true })
   })
 
-  return null
+  // #1290: this route used to render NULL while the lineage resolved over
+  // the wire — an empty router outlet ("the pane disappears on send", p0 /
+  // now:none, no tree at all). Hold the frozen last view instead; the
+  // effect navigates to the canonical route the moment it resolves.
+  return <SessionPanelHold />
 }
 
 // Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
@@ -237,8 +276,30 @@ function ResolvedDraftRoute(props: { draft: DraftTab }) {
             <SDKProvider directory={directory}>
               <DirectoryDataProvider directory={directory} server={serverKey}>
                 <DraftProviders>
-                  <Suspense>
-                    <NewSession />
+                  <Suspense
+                    fallback={
+                      // #1286: a lazy import that stalls (fleet tunnel windows)
+                      // rendered NOTHING while suspended — a blank with the
+                      // chrome intact. Show the loading state instead, on the
+                      // panel card's own ground (a transparent slot reads as
+                      // a blank panel in the wrong shade).
+                      <div class="flex h-full w-full items-center justify-center bg-v2-background-bg-base">
+                        <Spinner class="size-5 text-v2-icon-icon-muted" />
+                      </div>
+                    }
+                  >
+                    {/* #1288 (never unmount first): register the draft view
+                        so a send (draft→session route swap) holds the frozen
+                        composer + the sent message until the session view's
+                        gates resolve — instead of a blank route outlet for
+                        the wire round-trips. display:contents keeps the
+                        wrapper layout-neutral. */}
+                    <div
+                      class="contents"
+                      ref={(el) => registerHeldPanelView(el)}
+                    >
+                      <NewSession />
+                    </div>
                   </Suspense>
                 </DraftProviders>
               </DirectoryDataProvider>
@@ -431,7 +492,7 @@ function DraftProviders(props: ParentProps) {
 function AmicodeThemeBridge() {
   const theme = useTheme()
   const onMsg = (e: MessageEvent) => {
-    const d = e.data as { source?: string; kind?: string; colorScheme?: string; theme?: unknown } | undefined
+    const d = e.data as { source?: string; kind?: string; colorScheme?: string } | undefined
     if (d?.source !== "amicode") return
     // amicode#200 AC6: the Connect Cloud palette command deep-links into the
     // defaults capsule's compute-connect flow (consumed when home is showing).
@@ -451,24 +512,11 @@ function AmicodeThemeBridge() {
       adoptWorkspaceProjects((d as { projects?: unknown[] }).projects as Parameters<typeof adoptWorkspaceProjects>[0])
       return
     }
-    if (d.kind === "explorer-icon-theme") {
-      adoptExplorerIconTheme(d.theme)
-      return
-    }
-    if (d.kind === "syntax-theme") {
-      handleSyntaxThemeMessage((d as { theme?: string | object }).theme ?? "")
-      return
-    }
     if (d.kind !== "theme") return
     if (d.colorScheme === "light" || d.colorScheme === "dark") theme.setColorScheme(d.colorScheme)
   }
   window.addEventListener("message", onMsg)
   onCleanup(() => window.removeEventListener("message", onMsg))
-  // Preview tabs need the current icon theme after every iframe boot; the host
-  // replies with opaque, allowlisted asset bytes rather than a file location.
-  if (window.parent !== window) {
-    window.parent.postMessage({ source: "amicode", kind: "explorer-icon-theme-request" }, "*")
-  }
   // ⌘⇧P / Ctrl+Shift+P: when embedded in the amicode webview (we have a
   // parent), the EDITOR's Command Palette wins over the app's own palette —
   // capture-phase so the in-app binding never sees it; forwarded over the
@@ -494,6 +542,333 @@ function AmicodeThemeBridge() {
 /** amicode#363: bridge for the extension to open a new draft session with a
  *  pre-filled prompt. Must live inside TabsProvider + ServerProvider so it has
  *  access to useTabs().newDraft. */
+// 2026-09-19 fleet flash fix: cold session lineages blank the session view
+// for a full wire round-trip (send -> new session; switch -> not-yet-synced
+// session). Warm every OPEN session tab's lineage in the background so tab
+// switches resolve synchronously from the sync cache. resolve() dedupes
+// in-flight requests and short-circuits already-cached sessions, so this is
+// a no-op on warm state.
+/** #1290 debug badge (temporary — the send-blank chase): bottom-right, tiny,
+ *  inert. Shows the running build + whether the frozen-hold registry has a
+ *  snapshot. When the pane disappears, read this: `hold:n` = the registry
+ *  never populated (a registration wiring gap); `hold:Y` + a beat anyway =
+ *  the fallback render path is failing. */
+function HoldDebugBadge() {
+  const [state, setState] = createSignal("")
+  const [history, setHistory] = createSignal<string[]>([])
+  const [lastErr, setLastErr] = createSignal("")
+  const server = useServer()
+  const dataUrl = () => {
+    const current = (server as unknown as { current?: { http?: { url?: string } } }).current
+    return current?.http?.url ?? location.origin
+  }
+  // #1294: the local service in fleet mode authenticates every request
+  // (per-boot Basic) — the frontdoor never did, which is why the shipper
+  // silently 401'd on the real panel while working against the mock/rig.
+  const dataAuth = () => {
+    const current = (server as unknown as { current?: { username?: string; password?: string } }).current
+    if (!current?.password) return undefined
+    try {
+      return authTokenFromCredentials({ username: current.username, password: current.password })
+    } catch {
+      return undefined
+    }
+  }
+  {
+    // #1290: Solid routes unhandled reactive errors through console.error,
+    // NOT window.onerror — the teardown error behind the blank was never
+    // visible to the window capture. Intercept console.error too, and ship
+    // every capture to the hub's client-error log so nobody has to read
+    // them off the screen: POST /__amicode_client_log (the frontdoor
+    // appends to ~/.amico/server/client-errors.log on the hub).
+    const shipped = new Set<string>()
+    const ship = (kind: string, text: string) => {
+      if (shipped.has(text)) return
+      shipped.add(text)
+      try {
+        // The same-origin service 404s unknown routes (no proxy passthrough
+        // for POSTs). Post DIRECTLY to the data server's own origin (the
+        // fleet tunnel / the engine itself) — a simple text/plain POST so
+        // no CORS preflight is required; the frontdoor logs it regardless.
+        const target = new URL("/__amicode_client_log", dataUrl())
+        const auth = dataAuth()
+        void fetch(target, {
+          headers: auth ? { Authorization: `Basic ${auth}` } : {},
+          method: "POST",
+          body: `${kind} ${build}\n${text.slice(0, 600)}`,
+        }).catch(() => {})
+      } catch {}
+    }
+    const originalError = console.error
+    console.error = (...args: unknown[]) => {
+      const first = args.find((a) => a instanceof Error) ?? args[0]
+      const text = String(first instanceof Error ? first.message : (first as unknown))
+      const stack = args.find((a) => a instanceof Error) instanceof Error
+        ? String((args.find((a) => a instanceof Error) as Error).stack ?? "").slice(0, 400)
+        : ""
+      if (!text.includes("ResizeObserver loop")) {
+        setLastErr(`C:${text.slice(0, 80)}`)
+        ship("C", `${text}\n${stack}`)
+      }
+      originalError(...(args as Parameters<typeof console.error>))
+    }
+    const onWindowError = (e: ErrorEvent) => {
+      setLastErr(`E:${(e.message || "unknown").slice(0, 70)}`)
+      ship("E", `${e.message ?? "unknown"}\n${(e.error as Error | undefined)?.stack ?? ""}`)
+    }
+    const onRejection = (e: PromiseRejectionEvent) => {
+      setLastErr(`R:${String(e.reason).slice(0, 70)}`)
+      ship("R", `${String(e.reason)}\n${e.reason instanceof Error ? e.reason.stack ?? "" : ""}`)
+    }
+    window.addEventListener("error", onWindowError)
+    window.addEventListener("unhandledrejection", onRejection)
+    const entry = performance
+      .getEntriesByType("resource")
+      .map((r) => r.name)
+      .find((n) => n.includes("index-") && n.endsWith(".js"))
+    const build = entry ? entry.split("/").pop()!.replace("index-", "").replace(".js", "") : "?"
+
+    // #1294 diagnosis-at-distance: the harness rig cannot reproduce the
+    // live-SSE conditions of the real panel, and asking the user to read
+    // console rings mid-lag is the wrong ergonomics. Ship the diagnostic
+    // rings to the hub's client log on an interval — the panel self-
+    // reports what its loads/gates/mirror did, and the log is read
+    // remotely. Strips together with the badge once trusted.
+    const diagStart = Date.now()
+    const postRaw = (kind: string, text: string) => {
+      try {
+        const target = new URL("/__amicode_client_log", dataUrl())
+        const auth = dataAuth()
+        void fetch(target, { method: "POST", headers: auth ? { Authorization: `Basic ${auth}` } : {}, body: `${kind} ${build}
+${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots mid-JSON
+      } catch {}
+    }
+    const briefMap = (m?: Map<string, unknown[]>) =>
+      m
+        ? Object.fromEntries(
+            [...m.entries()].slice(-4).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
+          )
+        : null
+    const shipRings = () => {
+      try {
+        const w = globalThis as {
+          __loadDebug?: Map<string, unknown[]>
+          __gateDebug?: Map<string, unknown[]>
+          __mirrorDebug?: unknown[]
+          __mirrorHydrated?: string[]
+        }
+        postRaw(
+          "D",
+          JSON.stringify({
+            url: location.pathname.slice(-46),
+            up: Math.round((Date.now() - diagStart) / 1000),
+            load: briefMap(w.__loadDebug),
+            gate: briefMap(w.__gateDebug),
+            mirror: w.__mirrorDebug?.slice(-4) ?? null,
+            hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
+          }),
+        )
+      } catch {}
+    }
+    const shipTimeout = setTimeout(shipRings, 8_000)
+    const shipInterval = setInterval(shipRings, 30_000)
+    let lastHtml = -1
+    let lastKids = -1
+    const ring: string[] = []
+    let rafId = 0
+    const tickFast = () => {
+      const frame = document.querySelector("[data-amicode-panel]")
+      const html = frame ? frame.innerHTML.length : -1
+      const kids = frame ? frame.childElementCount : -1
+      // Only SIGNIFICANT transitions enter the ring: a kids change or a
+      // content-size swing > 1200 bytes. Streaming deltas are a few bytes
+      // and would flood the history out of the beat's evidence.
+      if (kids !== lastKids || (html !== -1 && lastHtml !== -1 && Math.abs(html - lastHtml) > 1200)) {
+        if (lastHtml !== -1) {
+          const pill = document.querySelectorAll('[style*="backdrop-filter"]').length
+          ring.push(`${lastKids}k/${lastHtml}h/p${pill}`)
+          if (ring.length > 6) ring.shift()
+          setHistory([...ring])
+        }
+        lastHtml = html
+        lastKids = kids
+      } else if (html !== lastHtml) {
+        lastHtml = html
+      }
+      rafId = requestAnimationFrame(tickFast)
+    }
+    rafId = requestAnimationFrame(tickFast)
+    const timer = setInterval(() => {
+      const frame = document.querySelector("[data-amicode-panel]")
+      const pill = document.querySelectorAll('[style*="backdrop-filter"]').length
+      const main = document.querySelector("main")
+      const mainKids = main ? main.childElementCount : -1
+      const prewarm = (globalThis as { __amicodePrewarm?: { n: number; at: number }; __amicodePrewarmErr?: string }).__amicodePrewarm
+      const prewarmErr = (globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr
+      const warmState = prewarm
+        ? `warm:${prewarm.n}@${Math.round((Date.now() - prewarm.at) / 1000)}s`
+        : `warm:none${prewarmErr ? "!" + prewarmErr.slice(0, 40) : ""}`
+      setState(`${build} | up:${Math.round(performance.now() / 1000)}s | ${warmState} | hold:${heldPanelViewState() ? "Y" : "n"} | now:${frame ? frame.childElementCount + "k/" + frame.innerHTML.length + "h" : "none"} | main:${mainKids} | p${pill} | ${location.pathname.slice(-34)}${lastErr() ? "\n" + lastErr() : ""}`)
+    }, 500)
+    // #1287: clean up EVERY effect this badge installs, not just the 500ms
+    // interval — restore console.error, drop both window listeners, and clear
+    // the diagnostic timeout/interval and the animation-frame loop.
+    onCleanup(() => {
+      console.error = originalError
+      window.removeEventListener("error", onWindowError)
+      window.removeEventListener("unhandledrejection", onRejection)
+      clearTimeout(shipTimeout)
+      clearInterval(shipInterval)
+      cancelAnimationFrame(rafId)
+      clearInterval(timer)
+    })
+  }
+  return (
+    <div
+      style={{
+        position: "fixed",
+        right: "6px",
+        bottom: "6px",
+        "z-index": "99999",
+        "font-size": "10px",
+        "font-family": "ui-monospace, monospace",
+        background: "rgba(0, 0, 0, 0.7)",
+        color: "#fff",
+        padding: "3px 7px",
+        "border-radius": "4px",
+        "pointer-events": "none",
+        opacity: "0.85",
+        "white-space": "pre-line",
+      }}
+    >
+      {state()}
+      {"\n"}
+      {history().join("  ")}
+    </div>
+  )
+}
+
+function SessionLineagePrewarmer() {
+  const global = useGlobal()
+  const tabs = useTabs()
+  // #1294: pin OPEN TABS for their lifetime — the route-level pin unpins
+  // the session the moment you switch away, and without a pin the cache
+  // evictor can drop an idle tab's message data between warm passes
+  // (making every back-and-forth switch a cold wire reload). Track our
+  // pins locally so each tab session is pinned exactly once and unpinned
+  // when its tab closes.
+  const pinnedTabs = new Map<string, (sessionID: string) => void>()
+  const resolveTabSession = (tab: { server?: string; sessionId: string }) => {
+    const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
+    return conn ? global.ensureServerCtx(conn).sync?.session : undefined
+  }
+  createEffect(() => {
+    const open = new Set<string>()
+    for (const tab of tabs.store) {
+      if (tab.type !== "session") continue
+      open.add(tab.sessionId)
+      const session = resolveTabSession(tab)
+      if (session && !pinnedTabs.has(tab.sessionId)) {
+        pinnedTabs.set(tab.sessionId, (id) => session.unpin(id))
+        session.pin(tab.sessionId)
+      }
+    }
+    for (const [sessionID, unpin] of pinnedTabs) {
+      if (!open.has(sessionID)) {
+        pinnedTabs.delete(sessionID)
+        unpin(sessionID)
+      }
+    }
+  })
+  createEffect(() => {
+    for (const tab of tabs.store) {
+      if (tab.type !== "session") continue
+      const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
+      // #1290: the sync context lives on the SERVER CTX, not the raw
+      // connection entry (conn.sync is undefined — this loop silently
+      // skipped every tab since it was written). Resolve through the ctx.
+      const session = conn ? global.ensureServerCtx(conn).sync?.session : undefined
+      if (!session) continue
+      if (session.lineage && !session.lineage.peek(tab.sessionId)) {
+        void session.lineage.resolve(tab.sessionId).catch(() => {})
+      }
+      // #1294c: also seed data.info for open tabs — tabs can reference
+      // sessions outside the 30-recent warm window; resolve() is
+      // promise-deduped so this is one background fetch per tab per boot.
+      if (session.resolve) {
+        void session.resolve(tab.sessionId).catch(() => {})
+      }
+      // Messages too: the timeline gates on the sync store holding the
+      // session's messages — a cold message load is the same wire gap.
+      if (session.prefetch) {
+        // #1292 deeper warm for open tabs — the actively-used sessions get
+        // the first ~3 pages so history scrolls locally; the 15s freshness
+        // guard in prefetch() keeps repeat passes free.
+        void session.prefetch(tab.sessionId, 60).catch(() => {})
+      }
+    }
+  })
+  // #1289 P2 (bulk mirror): warm the N most-recent sessions across the
+  // server — lineage + the first message page each — not just OPEN TABS.
+  // Over a fleet link, a tab click to any recently-touched session then
+  // renders from the local mirror with zero wire round-trips. One
+  // recency-ordered list page per pass (the server sorts); the
+  // lineage-peek + shouldPrefetch guards make repeat passes free.
+  const BULK_WARM_SESSIONS = 30
+  const BULK_WARM_MESSAGES = 20
+  const bulkWarm = async () => {
+    for (const conn of global.servers.list()) {
+      // #1290: same ctx fix — conn.sync is undefined on raw list entries.
+      const sync = global.ensureServerCtx(conn).sync
+      if (!sync?.session) {
+        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
+        continue
+      }
+      let recent: Array<{ id: string }> = []
+      try {
+        const ctx = global.ensureServerCtx(conn)
+        const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
+        // #1294c: keep the FULL session objects — the warm's list response
+        // already carries them, and seeding data.info here is what lets
+        // sync()'s cache check early-return on a switch. Without it, a
+        // warmed+cached session still fetched its info on every switch
+        // (wire RTT), and the outlet Suspense held the panel for it.
+        recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
+        ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
+          n: recent.length,
+          at: Date.now(),
+        }
+      } catch (e) {
+        console.warn("[prewarmer] bulk list failed:", e)
+        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
+        continue
+      }
+      for (const info of recent) {
+        // #1294c: seed data.info from the list payload — zero wire cost.
+        // The v2 list objects carry location:{directory} with NO
+        // top-level directory/slug/path — normalizeSessionInfo maps them
+        // (every other consumer normalizes at the boundary; the raw
+        // object crashed the tab strip's render on the real hub).
+        try {
+          sync.session.remember(normalizeSessionInfo(info))
+        } catch {
+          /* best-effort */
+        }
+        if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
+          void sync.session.lineage.resolve(info.id).catch(() => {})
+        }
+        if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
+          void sync.session.prefetch(info.id, BULK_WARM_MESSAGES).catch(() => {})
+        }
+      }
+    }
+  }
+  void bulkWarm()
+  const warmTimer = setInterval(() => void bulkWarm(), 20_000)
+  onCleanup(() => clearInterval(warmTimer))
+  return null
+}
+
 function AmicodeNavigateBridge() {
   const tabs = useTabs()
   const server = useServer()
@@ -696,8 +1071,16 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
 
 function ServerKey(props: ParentProps) {
   const server = useServer()
+  // #1290 (held key): while the agent is thinking/streaming, SSE bursts
+  // refresh the server context and the selected-server key signal CHANGES
+  // VALUE mid-stream — a keyed dispose+create of the WHOLE shell whose
+  // creation can abort in the transition frame (main:0 during thinking).
+  // A fallback can't cover a re-key; holding the last valid key through
+  // the churn means the shell never re-keys on flicker — only on a real
+  // server change (a genuinely new key).
+  const heldKey = createMemo((prev: string | undefined) => server.key ?? prev, undefined)
   return (
-    <Show when={server.key} keyed>
+    <Show when={heldKey()} keyed fallback={<SessionPanelHold />}>
       {props.children}
     </Show>
   )
@@ -740,11 +1123,35 @@ export function AppInterface(props: {
                 root={(routerProps) => (
                   <TabsProvider>
                     <AmicodeNavigateBridge />
+                    <SessionLineagePrewarmer />
+                    {/* #1287: gate on the actual boolean — the enclosing Show
+                        keys on newLayoutDesigns().toString(), which is truthy
+                        for BOTH values, so it never gated the badge. */}
+                    <Show when={useSettings().general.newLayoutDesigns()}>
+                      <HoldDebugBadge />
+                    </Show>
                     <PermissionProvider>
                       <NotificationProvider>
                         <ServerShell>
                           <Show when={useSettings().general.newLayoutDesigns()} fallback={routerProps.children}>
-                            <NewAppLayout serverScoped={props.serverScoped}>{routerProps.children}</NewAppLayout>
+                            <NewAppLayout serverScoped={props.serverScoped}>
+                              {/* #1290 (outlet net): every ErrorBoundary AND
+                                  every Suspense in the app lives INSIDE the
+                                  route trees. A resource read suspending
+                                  above them (the sync's resources refetch on
+                                  the SSE churn while the agent streams)
+                                  propagated to the router and blanked the
+                                  WHOLE outlet: no error, no catch, main:0
+                                  until the resource resolved. This pair holds
+                                  the frozen view through both classes —
+                                  thrown teardowns (ErrorBoundary) and
+                                  pending resources (Suspense). */}
+                              <ErrorBoundary fallback={() => <SessionPanelHold />}>
+                                <Suspense fallback={() => <SessionPanelHold />}>
+                                  {routerProps.children}
+                                </Suspense>
+                              </ErrorBoundary>
+                            </NewAppLayout>
                           </Show>
                         </ServerShell>
                       </NotificationProvider>
@@ -791,8 +1198,21 @@ function Routes(props: { serverScoped?: JSX.Element }) {
         <Route path="/server/:serverKey/session/:id" component={TargetSessionRoute} />
       </Show>
       <Route path="/new-session" component={DraftRoute} />
+      <Route path="*404" component={RouteNotFound} />
     </>
   )
+}
+
+/** #1290: the catch-all for stale hrefs (old route formats persisted in
+ *  tabs/localStorage) — an unmatched path used to render an EMPTY router
+ *  outlet (main:0 / now:none — the blank on question, response, switch).
+ *  Hold the frozen view and recover home, where the app state rebuilds. */
+function RouteNotFound() {
+  const navigate = useNavigate()
+  createEffect(() => {
+    navigate("/", { replace: true })
+  })
+  return <SessionPanelHold />
 }
 
 /** Landing route when the Home/Dashboard page is removed: creates a new draft
@@ -804,9 +1224,18 @@ function NewSessionLanding() {
   const navigate = useNavigate()
 
   const land = () => {
+    // #1291 diagnostic hook — one build cycle to pinpoint the gate
+    const w = globalThis as { __landingDebug?: unknown[] }
+    w.__landingDebug = w.__landingDebug ?? []
+    const dbg = (info: Record<string, unknown>) => {
+      w.__landingDebug!.push({ t: Date.now(), ...info })
+      if (w.__landingDebug!.length > 40) w.__landingDebug!.shift()
+    }
+
     // If there's already a session or draft tab, navigate to it
     const existing = tabs.store.find((tab) => tab.type === "session" || tab.type === "draft")
     if (existing) {
+      dbg({ gate: "existing-tab", href: tabHref(existing) })
       navigate(tabHref(existing), { replace: true })
       return
     }
@@ -814,7 +1243,10 @@ function NewSessionLanding() {
     // Otherwise create a new draft — find a server + directory to use
     const connections = global.servers.list()
     const conn = connections[0]
-    if (!conn) return // no server connected yet — will re-render when one connects
+    if (!conn) {
+      dbg({ gate: "no-server" })
+      return // no server connected yet — will re-render when one connects
+    }
 
     // projects.list() is the client-side store of OPENED projects, which is empty
     // on a fresh profile and for servers running outside any registered project
@@ -822,16 +1254,33 @@ function NewSessionLanding() {
     // to a server-known worktree keeps this route from rendering nothing at all.
     const ctx = global.ensureServerCtx(conn)
     const directory = resolveLandingDirectory(ctx.projects.list(), ctx.sync.data.project[0]?.worktree)
-    if (!directory) return // nothing to land on yet — re-renders when sync arrives
+    if (!directory) {
+      dbg({ gate: "no-directory", projects: ctx.projects.list().length, syncProjects: ctx.sync.data.project?.length ?? -1 })
+      return // nothing to land on yet — re-renders when sync arrives
+    }
 
-    tabs.newDraft({ server: ServerConnection.key(conn), directory }, "")
+    dbg({ gate: "newDraft", directory })
+    tabs.newDraft({ server: ServerConnection.key(conn), directory }, "").catch((err) => {
+      dbg({ gate: "newDraft-error", err: String(err?.message ?? err) })
+    })
   }
 
   return (
-    <Show when={tabs.ready()}>
-      {(() => { land(); return null })()}
+    <Show when={tabs.ready()} fallback={null}>
+      <LandingEffect land={land} />
     </Show>
   )
+}
+
+/** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
+ *  evaluated ONCE at mount, never again. When the server connected (or the
+ *  sync's project data arrived) after that moment — normal on a cold profile
+ *  or a slow tunnel — land() early-returned "will re-render when one
+ *  connects" and then nothing ever re-ran: the app sat at "/" rendering
+ *  nothing, forever. A createEffect makes the promised re-land real. */
+function LandingEffect(props: { land: () => void }) {
+  createEffect(() => props.land())
+  return null
 }
 
 function NewLayoutLegacySessionRedirect() {

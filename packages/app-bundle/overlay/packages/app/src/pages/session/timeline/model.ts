@@ -24,20 +24,14 @@ export function createTimelineModel(input: {
       clearRefresh()
       if (!id) return
 
-      const cached = untrack(() => sync().data.message[id] !== undefined)
-      const stale = cached && !serverSync().session.fresh(id, sessionFreshness)
-
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = undefined
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined
-          if (input.sessionID() !== id) return
-          untrack(() => {
-            if (stale) void sync().session.sync(id, { force: true })
-          })
-        }, 0)
-      })
-
+      // #1294: the 15s staleness force-refetch is REMOVED. It fired on
+      // every switch to a session idle >15s, and the resource's own sync
+      // then JOINED the in-flight force task (runInflight dedupe) — so the
+      // timeline suspended on a wire round-trip for a session whose
+      // messages were cached and on screen the whole time (the panel's
+      // rings: zero message loads, yet frozen/blank holds on every
+      // switch). Freshness is the SSE reducers' job; the warm pass and
+      // on-demand loads cover the rest.
       return sync().session.sync(id)
     },
   )
