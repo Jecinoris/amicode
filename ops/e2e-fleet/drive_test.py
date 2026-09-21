@@ -183,12 +183,12 @@ def run(debug_port, app_port, latency_ms):
             return [l.strip() for l in open("/tmp/e2e_mock_requests.log") if l.strip()]
         except Exception:
             return []
-    snap_n = sum(1 for r in mock_requests() if r.startswith("GET /snapshot"))
+    snap_n = sum(1 for r in mock_requests() if "GET /snapshot" in r)
     print("  snapshot-boot: prewarm=", d.ev("JSON.stringify(globalThis.__amicodePrewarm ?? null)"),
           "err=", d.ev("JSON.stringify(globalThis.__amicodePrewarmErr ?? null)"),
           "seeded=", d.ev("JSON.stringify(globalThis.__snapshotSeeded ?? [])"))
     assert snap_n == 1, f"snapshot flow: expected exactly 1 GET /snapshot, saw {snap_n}"
-    list_n = sum(1 for r in mock_requests() if r.startswith("GET /session?") or r == "GET /session HTTP/1.1")
+    list_n = sum(1 for r in mock_requests() if "GET /session?" in r or r.endswith("GET /session HTTP/1.1"))
     assert list_n <= 3, f"snapshot flow: session-list refetch storm? saw {list_n} list GETs at boot"
 
     # Flow 1: open the sessions list, then two sessions, and switch tabs.
@@ -202,7 +202,23 @@ def run(debug_port, app_port, latency_ms):
         time.sleep(1.0)
     if cards == 0:
         raise AssertionError("session cards not found — the mock's list shape needs updating")
+
+    # #1308 STATIC-CLONE DETECTOR: after clicking into a session, how long
+    # until ITS content (not the previous session's held view) is on screen?
+    # The real-fleet symptom: the old session's view stays painted ~8s while
+    # the route transition pends slow queries (touched-files retry chains on
+    # a busy hub). A held old view is NOT a blank — the blank gate is blind
+    # to it; content identity is the only honest probe.
+    def ms_until_content(d, needle, budget=15.0):
+        t0 = time.time()
+        while time.time() - t0 < budget:
+            if d.ev(f"(() => document.body.innerText.includes('{needle}') ? 1 : 0)()") == 1:
+                return (time.time() - t0) * 1000
+            time.sleep(0.1)
+        return -1.0
     assert d.click_card("Alpha test session") == "ok"
+    alpha_ms = ms_until_content(d, "Alpha user message 1")
+    print(f"  switch-to-Alpha content: {alpha_ms:.0f}ms")
     time.sleep(6)
     alpha_n = sum(1 for r in mock_requests() if "/ses_test_alpha_0001/message" in r)
     assert alpha_n == 0, f"snapshot flow: seeded Alpha switch still fetched its page {alpha_n}x"
@@ -211,6 +227,11 @@ def run(debug_port, app_port, latency_ms):
     d.open_sessions_view()
     time.sleep(4)
     assert d.click_card("Beta test session") == "ok"
+    beta_ms = ms_until_content(d, "Beta user message 1")
+    print(f"  switch-to-Beta content: {beta_ms:.0f}ms (was on Alpha before)")
+    stale_ms = alpha_ms if beta_ms < 0 else beta_ms
+    if beta_ms > 4000:
+        print(f"  STATIC CLONE REPRODUCED: Beta content took {beta_ms:.0f}ms")
     time.sleep(6)
     # switch back and forth via the tab strip
     for title in ("Alpha test session", "Beta test session", "Alpha test session"):
