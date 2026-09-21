@@ -4,7 +4,7 @@
 // forward, the HubProxy registered on FleetPlane.attached, and the credential
 // injection. Each AC tests one lifecycle concern through the public interface.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -404,6 +404,106 @@ describe("Route wiring — POST /attach invokes the lifecycle, POST /detach tear
       // Lifecycle was NOT invoked
       expect(factory.calls).toHaveLength(0);
       expect(plane.attached).toBeUndefined();
+    } finally {
+      await svc.stop();
+    }
+  });
+});
+
+/** Write the fleet overlay manifest so stageFleetDataPlane succeeds. */
+function writeDataPlaneManifest(sourceRoot: string): void {
+  const manifestDir = join(sourceRoot, "fleet_overlay", "overlays");
+  mkdirSync(manifestDir, { recursive: true });
+  writeFileSync(
+    join(manifestDir, "fleet-data-plane.json"),
+    JSON.stringify({
+      overlay_id: "fleet-data-plane",
+      overlay_version: 1,
+      base_version: "v1.18.29",
+      surfaces: [{
+        surface_id: "data-plane-routing",
+        fleet_class: "data-plane routing",
+        fields: [
+          { name: "upstream_mode", base_default: "engine" },
+          { name: "hub_upstream", base_default: null },
+          { name: "hub_credential_entry", base_default: null },
+          { name: "merged_projection", base_default: null },
+        ],
+      }],
+    }),
+  );
+}
+
+// ── createAmicodeService integration: the fleet opts wire the lifecycle ──────
+
+describe("createAmicodeService with transportFactory wires the attach lifecycle (#1381)", () => {
+  let dir: string;
+  let attachmentFile: string;
+  let rosterFile: string;
+  let credentialFile: string;
+  let overlaySource: string;
+  const PASSWORD = "svc-integration-mint";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "attach-svc-int-"));
+    attachmentFile = join(dir, "attachment.json");
+    rosterFile = join(dir, "roster.json");
+    credentialFile = join(dir, "attachment-credentials.json");
+    overlaySource = join(dir, "overlay-source");
+    writeDataPlaneManifest(overlaySource);
+    writeRoster(rosterFile, [
+      row({ machine_id: "peer-01", sshAlias: "peer-one@host", transport: "ssh" }),
+    ]);
+    process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE = credentialFile;
+  });
+  afterEach(() => {
+    delete process.env.AMICO_FLEET_ATTACHMENT_FILE;
+    delete process.env.AMICO_FLEET_ROSTER_FILE;
+    delete process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("POST /attach through createAmicodeService with a transport factory invokes the lifecycle", async () => {
+    const factory = mockTransportFactory();
+    const svc = createAmicodeService({
+      password: PASSWORD,
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        transportFactory: factory,
+        attachRemotePort: 43117,
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = serverAuthHeader(PASSWORD);
+
+    try {
+      const attach = await fetch(`${origin}/amicode/fleet/attach`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ machine_id: "peer-01" }),
+      });
+      expect(attach.status).toBe(200);
+      const body = (await attach.json()) as { ok: boolean; attached: boolean };
+      expect(body.ok).toBe(true);
+      expect(body.attached).toBe(true);
+
+      // The transport factory was invoked by the lifecycle
+      expect(factory.calls).toHaveLength(1);
+      expect(factory.calls[0].target.machine_id).toBe("peer-01");
+
+      // Detach tears it down
+      const detach = await fetch(`${origin}/amicode/fleet/detach`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ machine_id: "peer-01" }),
+      });
+      expect(detach.status).toBe(200);
+      expect(factory.handles[0].stopped).toBe(true);
     } finally {
       await svc.stop();
     }

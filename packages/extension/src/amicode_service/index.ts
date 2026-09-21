@@ -60,6 +60,7 @@ import { rosterReadResponse, rosterReportResponse } from "./roster";
 import { attachmentStatusResponse } from "./attachment_pointer";
 import { attachActionResponse, detachActionResponse } from "./attach_action";
 import type { AttachLifecycle } from "./attach_lifecycle";
+import { AttachLifecycle as AttachLifecycleImpl, type TransportFactory } from "./attach_lifecycle";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -561,6 +562,14 @@ export function createAmicodeService(
       /** #1378 (D3 resolver wiring): the keeper's upstream for the peer
        *  branch. /amicode/roster resolves here regardless of attachment. */
       keeper?: { getUrl: () => string | undefined };
+      /** #1381: the SSH transport factory for the attach lifecycle. When
+       *  present, the attach/detach routes dynamically spin up/tear down
+       *  SSH forwards and register HubProxies on FleetPlane.attached.
+       *  Injectable for tests; defaults to bringUpSshAttachment. */
+      transportFactory?: TransportFactory;
+      /** #1381: the remote port the peer engine listens on (for the SSH
+       *  forward's -L target). Default 43117. */
+      attachRemotePort?: number;
     };
   } = {},
 ): AmicodeServiceServer {
@@ -583,6 +592,11 @@ export function createAmicodeService(
   // always-on route can reach the store when it exists; a standalone boot
   // leaves it undefined and the reset is a no-op (nothing to reset).
   let sessionResumeRef: SessionEventResume | undefined;
+  // #1381: the attach lifecycle — hoisted alongside sessionResumeRef so the
+  // always-on registerAttachmentRoutes call (below the fleet block) can
+  // wire it regardless of whether the fleet plane staged. A standalone boot
+  // leaves it undefined; the route handler checks for its presence.
+  let attachLifecycle: AttachLifecycleImpl | undefined;
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
@@ -673,7 +687,7 @@ export function createAmicodeService(
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           })
         : undefined;
-      server.attachFleetPlane({
+      const fleetPlaneObj: import("./server").FleetPlane = {
         getMode,
         hub: new HubProxy({
           getUrl: opts.fleet.hub.getUrl,
@@ -691,7 +705,20 @@ export function createAmicodeService(
         hubDownPointer: () => monitor.snapshot().pointer,
         ...(attachedProxy ? { attached: attachedProxy } : {}),
         ...(keeperProxy ? { keeper: keeperProxy } : {}),
-      });
+      };
+      server.attachFleetPlane(fleetPlaneObj);
+      // #1381: create the attach lifecycle for non-client fleet machines.
+      // Client relays route everything through the hub (never directly to a
+      // peer), so the lifecycle is only meaningful on engine-armed machines.
+      // The transportFactory defaults to bringUpSshAttachment when not injected.
+      if (!isClient && opts.fleet.transportFactory) {
+        attachLifecycle = new AttachLifecycleImpl({
+          plane: fleetPlaneObj,
+          transportFactory: opts.fleet.transportFactory,
+          remotePort: opts.fleet.attachRemotePort,
+          dataPlaneTimeoutMs: opts.fleet.dataPlaneTimeoutMs,
+        });
+      }
       registerFleetRoutes(server, {
         getMode,
         readCredential,
@@ -722,7 +749,12 @@ export function createAmicodeService(
   // endpoint — ALWAYS-ON (a standalone peer must attach; the entitlement-gated
   // fleet block above cannot own these). The SSE-cursor reset is wired to the
   // client relay's store when one exists, else a no-op.
-  registerAttachmentRoutes(server, { resetCursorOnSwitch: () => sessionResumeRef?.reset() });
+  // #1381: the lifecycle is wired when the fleet plane staged with a transport
+  // factory — the route handler invokes it on attach/detach.
+  registerAttachmentRoutes(server, {
+    resetCursorOnSwitch: () => sessionResumeRef?.reset(),
+    lifecycle: attachLifecycle,
+  });
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   return server;
