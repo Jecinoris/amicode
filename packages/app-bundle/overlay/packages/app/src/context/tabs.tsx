@@ -217,14 +217,17 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         const next = { type: "session" as const, ...tab }
         const existing = store.find((item) => tabKey(item) === tabKey(next))
         if (existing) return existing
-        void startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              if (tabs.some((item) => tabKey(item) === tabKey(next))) return
-              tabs.push(next)
-            }),
-          )
-        })
+        // #1310: a tab-array push is a fine-grained store update — it needs
+        // NO transition. Wrapping it in startTransition spawned a fresh
+        // transition from the route's post-flush effect on every session
+        // switch; that empty transition, racing the router's own, is the
+        // last piece of the switch wedge.
+        setStore(
+          produce((tabs) => {
+            if (tabs.some((item) => tabKey(item) === tabKey(next))) return
+            tabs.push(next)
+          }),
+        )
         return next
       },
       reorder(keys: string[]) {
