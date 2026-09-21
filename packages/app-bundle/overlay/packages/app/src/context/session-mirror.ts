@@ -71,6 +71,19 @@ export function mirrorKey(scope: string, sessionID: string) {
  *  collapse into one small write per settle. */
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** #1303: one prune per scope per minute, max. */
+const pruneTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function schedulePrune(scope: string) {
+  if (pruneTimers.has(scope)) return
+  pruneTimers.set(
+    scope,
+    setTimeout(() => {
+      pruneTimers.delete(scope)
+      void pruneMirror(scope)
+    }, 60_000),
+  )
+}
+
 /** #1291 debug: the harness reload test needs to see mirror writes;
  *  bounded ring, harmless in production, removable once trusted. */
 export function mirrorDebug(event: string, detail: string) {
@@ -106,7 +119,15 @@ export function saveMirror(scope: string, sessionID: string, record: Omit<Mirror
           }
           tx.oncomplete = () => {
             mirrorDebug("saved", key)
-            void pruneMirror(scope)
+            // #1303: prune LAZILY, never per-save. The per-save prune ran a
+            // full-store read-write cursor after EVERY write — for a
+            // streaming session that's a save+prune cycle ~1/s, and the
+            // prune's readwrite lock STARVED the mirror reads (the next
+            // switch's hydrate queued behind the storm: the measured 8s
+            // paints on exactly the active sessions while idle ones
+            // hydrated instantly). One prune per minute is plenty for a
+            // 512-record cap.
+            schedulePrune(scope)
           }
         } catch (error) {
           mirrorDebug("sync-error", String(error))
