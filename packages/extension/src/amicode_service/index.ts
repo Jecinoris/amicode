@@ -59,6 +59,7 @@ import { solverModeResponse } from "./solver_mode";
 import { rosterReadResponse, rosterReportResponse } from "./roster";
 import { attachmentStatusResponse } from "./attachment_pointer";
 import { attachActionResponse, detachActionResponse } from "./attach_action";
+import type { AttachLifecycle } from "./attach_lifecycle";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -276,6 +277,11 @@ export function registerRosterRoutes(server: AmicodeServiceServer): AmicodeServi
 // and the pointer still flips.
 export interface AttachmentRouteDeps {
   resetCursorOnSwitch?: () => void;
+  /** #1381: the upstream lifecycle coordinator. When present, the attach/detach
+   *  route handlers invoke it to spin up/tear down the SSH forward and
+   *  register/clear the HubProxy on FleetPlane.attached. Absent on a plain
+   *  standalone boot (no fleet plane to manage). */
+  lifecycle?: AttachLifecycle;
 }
 
 export function registerAttachmentRoutes(
@@ -284,13 +290,43 @@ export function registerAttachmentRoutes(
 ): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/attachment", () => ({ body: attachmentStatusResponse() }));
 
-  server.add("POST", "/amicode/fleet/attach", ({ body }) => ({
-    body: attachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }),
-  }));
+  server.add("POST", "/amicode/fleet/attach", async ({ body }) => {
+    const result = attachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch });
+    // #1381: if the pointer write succeeded and a lifecycle is armed, spin up
+    // the SSH forward and register the HubProxy. A failed attach (unknown
+    // machine, bad body) never invokes the lifecycle — no half-started
+    // transport on a refused pointer.
+    if (deps.lifecycle) {
+      try {
+        const parsed = JSON.parse(result) as { ok?: boolean; pointer?: { sshAlias: string; transport: string; machine_id: string } };
+        if (parsed.ok && parsed.pointer) {
+          await deps.lifecycle.attach(parsed.pointer);
+        }
+      } catch {
+        // lifecycle failure does not mask the pointer write's success; the
+        // pointer is the source of truth for the resolver, the lifecycle is
+        // the LIVE transport layer on top.
+      }
+    }
+    return { body: result };
+  });
 
-  server.add("POST", "/amicode/fleet/detach", ({ body }) => ({
-    body: detachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }),
-  }));
+  server.add("POST", "/amicode/fleet/detach", async ({ body }) => {
+    // #1381: tear down the live transport BEFORE clearing the pointer/credential
+    // — the order matters: the resolver reads the pointer per-request, so
+    // clearing the pointer first would route to local while the SSH forward is
+    // still running (a brief window of stale routing). Teardown first, then
+    // clear.
+    if (deps.lifecycle) {
+      try {
+        await deps.lifecycle.detach();
+      } catch {
+        // lifecycle teardown failure is tolerated — proceed to clear the
+        // pointer so the resolver falls back to local.
+      }
+    }
+    return { body: detachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }) };
+  });
 
   return server;
 }
