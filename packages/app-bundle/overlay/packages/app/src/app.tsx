@@ -80,7 +80,7 @@ import { createSessionLineage } from "@/pages/session/session-lineage"
 import { bugDockController } from "@/pages/session/composer/bug-dock-controller"
 import { postBugReportPoke } from "@/utils/amicode-bug-report"
 
-import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, registerHeldPanelView, heldPanelViewState, SessionPanelHold } from "@/pages/session"
+import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, registerHeldPanelView, heldPanelViewState, SessionPanelHold, installLongTaskObserver } from "@/pages/session"
 import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
@@ -665,6 +665,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             gate: briefMap(w.__gateDebug),
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
             paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-12) ?? null,
+          longtask: (globalThis as { __longtaskRing?: unknown }).__longtaskRing?.slice(-40) ?? null,
             clone: (globalThis as { __cloneRing?: unknown }).__cloneRing?.slice(-12) ?? null,
             hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
@@ -934,6 +935,7 @@ function SessionLineagePrewarmer() {
       await Promise.all(workers)
     }
   }
+  installLongTaskObserver()
   void bulkWarm()
   const warmTimer = setInterval(() => void bulkWarm(), 20_000)
   onCleanup(() => clearInterval(warmTimer))

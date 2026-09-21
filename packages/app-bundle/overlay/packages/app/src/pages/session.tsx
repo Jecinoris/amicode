@@ -508,11 +508,17 @@ function TimelineHoldFallbackProbe(props: {
 function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
   const w = globalThis as {
     __paintT0?: Record<string, number>
-    __paintRing?: { id: string; ms: number; at: number }[]
+    __paintRing?: { id: string; ms: number; at: number; seg?: Record<string, number>; firstFrame?: number }[]
   }
   onMount(() => {
     const t0 = w.__paintT0?.[props.id]
-    if (t0 === undefined) return
+    // #1305: segment stamps — where did the time go? t0 (fetcher) -->
+    // mount (this onMount) --> first frame. A paint that is slow ONLY in
+    // ms-t0->mount means the render loop was busy elsewhere; slow only
+    // in mount->firstFrame means the browser couldn't paint (throttle,
+    // occlusion, or one giant task).
+    const tMount = performance.now()
+    const seg = { t0: Math.round(t0 ?? 0), mount: Math.round(tMount - (t0 ?? tMount)) }
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         w.__paintRing = w.__paintRing ?? []
@@ -520,12 +526,36 @@ function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
           id: props.id.slice(-14),
           ms: Math.round(performance.now() - t0),
           at: Date.now(),
+          seg,
+          firstFrame: Math.round(performance.now() - tMount),
         })
         if (w.__paintRing.length > 24) w.__paintRing.shift()
       })
     })
   })
   return props.children as unknown as JSX.Element
+}
+
+/** #1305: the browser's own longtask (>50ms) report — names the duration
+ *  and start of every main-thread blockage around the switch window. */
+export function installLongTaskObserver() {
+  const w = globalThis as { __longtaskRing?: { dur: number; start: number; at: number }[] }
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        w.__longtaskRing = w.__longtaskRing ?? []
+        w.__longtaskRing.push({
+          dur: Math.round(e.duration),
+          start: Math.round(e.startTime),
+          at: Date.now(),
+        })
+        if (w.__longtaskRing.length > 40) w.__longtaskRing.shift()
+      }
+    })
+    po.observe({ entryTypes: ["longtask"] })
+  } catch {
+    /* longtask unsupported — segment stamps still tell the story */
+  }
 }
 
 function SessionRouteFrame(props: ParentProps<{ padded?: boolean }>) {
