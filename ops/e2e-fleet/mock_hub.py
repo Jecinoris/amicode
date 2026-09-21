@@ -67,14 +67,22 @@ BY_ID = {s["id"]: s for s in SESSIONS}
 
 
 EXTRA_MESSAGES: dict = {}
+touched_attempts: dict = {}
+
+SESSION_NAMES = {"ses_test_alpha_0001": "Alpha", "ses_test_beta_0002": "Beta", "ses_test_gamma_0003": "Gamma"}
 
 def messages_for(id_: str) -> list:
     # Shape captured from the real hub: [{info: {..., id, sessionID, role,
     # time}, parts: [{type: "text", text, id, sessionID, messageID}]}]
     out = []
+    # #1310: message ids must be GLOBALLY UNIQUE like the real hub — the app's
+    # part store is keyed by message id, so per-session colliding ids made the
+    # LAST-seeded session's parts overwrite every earlier session's (the alpha
+    # view rendered gamma's text and the e2e content-probe lied for hours).
+    pfx = f"msg_{id_[-6:]}_"
     for i in range(1, 9):
-        user_id = f"msg_user_{i:04d}"
-        asst_id = f"msg_asst_{i:04d}"
+        user_id = f"{pfx}user_{i:04d}"
+        asst_id = f"{pfx}asst_{i:04d}"
         out.append({
             "info": {
                 "id": user_id,
@@ -82,13 +90,13 @@ def messages_for(id_: str) -> list:
                 "role": "user",
                 "agent": "plan",
                 "model": {"id": "mock-model", "providerID": "mock", "variant": "default"},
-                "summary": f"user message {i}",
+                "summary": f"{SESSION_NAMES.get(id_, id_)} user message {i}",
                 "time": {"created": NOW - 3000_000 + i * 2000},
             },
             "parts": [{
                 "type": "text",
-                "text": f"user message {i}",
-                "id": f"prt_user_{i:04d}",
+                "text": f"{SESSION_NAMES.get(id_, id_)} user message {i}",
+                "id": f"{pfx}u{i:04d}",
                 "sessionID": id_,
                 "messageID": user_id,
             }],
@@ -110,8 +118,8 @@ def messages_for(id_: str) -> list:
                 "time": {"created": NOW - 3000_000 + i * 2000 + 500, "completed": NOW - 3000_000 + i * 2000 + 900},
             },
             "parts": [
-                {"type": "step-start", "id": f"prt_step_{i:04d}", "sessionID": id_, "messageID": asst_id},
-                {"type": "text", "text": f"assistant reply {i}", "id": f"prt_asst_{i:04d}", "sessionID": id_, "messageID": asst_id},
+                {"type": "step-start", "id": f"{pfx}s{i:04d}", "sessionID": id_, "messageID": asst_id},
+                {"type": "text", "text": f"{SESSION_NAMES.get(id_, id_)} assistant reply {i}", "id": f"{pfx}a{i:04d}", "sessionID": id_, "messageID": asst_id},
             ],
         })
     # Live-sent messages (draft-flow /prompt handler) land after the scripted ones.
@@ -126,8 +134,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             line = fmt % a
             if "GET /" in line or "POST" in line:
+                import time as _t
                 with open("/tmp/e2e_mock_requests.log", "a") as f:
-                    f.write(line.split('"')[1] + "\n" if '"' in line else line + "\n")
+                    f.write(_t.strftime("%H:%M:%S") + "." + str(int(_t.time()*1000)%1000).zfill(3) + " " + (line.split('"')[1] + "\n" if '"' in line else line + "\n"))
         except Exception:
             pass
         print(f"REQ {self.path} {fmt % a}", flush=True)
@@ -387,6 +396,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(s if s else {"error": "not found"}, 200 if s else 404)
             return
         if m := re.match(r"^/session/([^/]+)/touched-files$", path):
+            touched_attempts[m.group(1)] = touched_attempts.get(m.group(1), 0) + 1
+            if touched_attempts[m.group(1)] <= -1:  # DISABLED for A/B: set to 2 to reproduce
+                time.sleep(max(LATENCY_MS, 10) / 1000.0)
+                self._json({"error": "busy"}, 503)
+                return
             self._json([])
             return
         if m := re.match(r"^/session/([^/]+)/diff$", path):
