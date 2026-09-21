@@ -382,7 +382,18 @@ class Group:
                                 index = i
                                 break
                         if index is not None:
-                            replay = self.history[index + 1:]
+                            # #1307: cap gap-replays TOO. A fresh document
+                            # inherits its predecessor's cursor (sessionStorage)
+                            # — with a running session that gap was ~7 minutes
+                            # = 512 frames. The full-gap replay flooded the
+                            # client, the reader choked, and it reconnected
+                            # with the SAME cursor → a permanent 512-frame
+                            # flood loop (~8s of churn every few seconds, the
+                            # noise floor under every switch). The reducers are
+                            # idempotent and the snapshot seeds state — the
+                            # most recent frames suffice, and the cursor
+                            # advances out of the loop.
+                            replay = self.history[max(index + 1, len(self.history) - REPLAY_CAP):]
                         else:
                             # Unknown id (evicted / restart): the most
                             # recent REPLAY_CAP frames — the full 512-frame

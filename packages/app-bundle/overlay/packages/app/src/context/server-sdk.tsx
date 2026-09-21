@@ -236,6 +236,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   } catch {
     /* private mode etc. — degrade to module state */
   }
+  const legacyOf = (event: unknown): event is { payload: { id?: string } } =>
+    typeof event === "object" && event !== null && "payload" in event
   const trackEventID = (payload: unknown) => {
     const id = (payload as { id?: unknown } | undefined)?.id
     if (typeof id === "string" && id) {
@@ -367,13 +369,25 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           setStreamStatus("connected")
           let yielded = Date.now()
           for await (const event of events) {
-            streamErrorLogged = false
-            const legacy = "payload" in event
-            if (legacy && event.payload.type === "sync") continue
-            const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
-            const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
-            trackEventID(legacy ? event.payload : (event as { id?: string }))
-            if (enqueueServerEvent(queue, { directory, payload })) schedule()
+            // #1307: cursor FIRST and body exception-proof. A malformed
+            // event previously threw (payload.type on undefined, adapter
+            // errors…) → the whole reader died through the outer catch →
+            // disconnect → reconnect with the STALE cursor → the frontdoor
+            // replayed the same gap (up to the whole ring) → the same
+            // poison event → a permanent reconnect-flood loop (512-frame
+            // floods every few seconds observed live). Skip poison; the
+            // cursor stays advanced either way.
+            try {
+              trackEventID(legacyOf(event) ? event.payload : (event as { id?: string }))
+              streamErrorLogged = false
+              const legacy = "payload" in event
+              if (legacy && event.payload.type === "sync") continue
+              const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
+              const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
+              if (enqueueServerEvent(queue, { directory, payload })) schedule()
+            } catch (eventError) {
+              console.warn("[global-sdk] event skipped (poison)", eventError)
+            }
 
             if (Date.now() - yielded < STREAM_YIELD_MS) continue
             yielded = Date.now()
