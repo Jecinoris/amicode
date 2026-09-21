@@ -602,13 +602,13 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
-    "packages/app/src/components/session/pdf-canvas-view.tsx": "89a2c67262d16f262a185bf9c20a44038c6e97abb72c8206d12e720efa4ec6bb",
-    "packages/app/src/components/session/preview-file-view.tsx": "7dad448cf6a166ede82b8908efd028eeb649139b59c7b996780c3f61c6a860ee",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "f108d45b9cda49150ddcf92fc153aca0988d94e7ccfd518b093475e87dfe18be",
+    "packages/app/src/components/session/preview-file-view.tsx": "c300cfe8a611c42c0bc6e3dd2f6ff16bf395b482eab2e90273218e5192197041",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "a46591ed1097d0fdcff61fb0c5529396955e8857cbef748747c51e472d5564c5",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
-    "packages/app/src/components/session/session-preview-tab.tsx": "8c17771e40a0385b394ea0ea1a6034f475b6f9ca1a348604b6ef507595017d9c",
+    "packages/app/src/components/session/session-preview-tab.tsx": "75ca11a22407ace3a267beedc69e0327b08db1db7605458f41912f1d54220bc4",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
     "packages/app/src/components/session/session-preview-tabs.ts": "672d147a6f1f46a7ac2eff7aff9da6cc069c476ff918e5ff4aed3a997310e6fe",
     "packages/app/src/components/session/session-preview-tree.test.ts": "6d1677caa56ec89fa5fcc8fc2f26fdcc1bc0a23217ce9c6d92888b272523c00a",
@@ -666,7 +666,7 @@
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
     "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
     "packages/app/src/pages/session/session-side-panel-structure.test.ts": "b2d1d007d9200d0ac4a0889e45c2dbe57a324a10cb26ae9ab8f420d3c890402b",
-    "packages/app/src/pages/session/session-side-panel.tsx": "c3f3fb553be21dcbde98c389a09c66582bddbcaa94ce303d80f8e5158cd3dbda",
+    "packages/app/src/pages/session/session-side-panel.tsx": "b295340d9a39ba37c9e025d6360669d2a879284c4e60df795b7902c5a4cef3fc",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
     "packages/app/src/pages/session/use-amicode-commands.test.ts": "65671d054c404edd2b799b0f6591a9c055e6ecb454a674fa0bd9a7fa6f68e111",
     "packages/app/src/pages/session/use-amicode-commands.tsx": "88bfdad9ae6dfd920b8e6a14ffebd2cf9e52b8f67bb9284cb358ad940643ca67",
@@ -722,15 +722,16 @@
     "packages/session-ui/src/v2/components/editable-diff-view.test.ts": "ab206fa17779e6e9015d343ae37e3067dfc1821a93b6ba566b7a0dce0fc19acb",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "f682e398ece864b5b854ca36698581c7e1cc5964eed96e7b45cabfcb64748b24",
     "packages/session-ui/src/v2/components/editor-core.test.ts": "bd6552c0e7080afd554cb57ad690cc1504555712274c8b02702c64bb09460234",
-    "packages/session-ui/src/v2/components/editor-core.ts": "a03da4863d0dc4333772b8369a63822dd730bfd84dfa876f965cdd594292484b",
+    "packages/session-ui/src/v2/components/editor-core.ts": "7c5ff6c9d8291abbe96c0547b487ec333737e315816f7d52f55ac70f3eace83c",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
     "packages/session-ui/src/v2/components/preview-editor.test.ts": "b8da9320a594aaa680ed3848612fcea66f41c0a046a673f0cf6155c2a0b697dd",
-    "packages/session-ui/src/v2/components/preview-editor.tsx": "d356ff168919abc8446c5fac2836791338fb3b9124f558c43ea7d3d5a1bcc5f4",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "f0a2d60f42e730ced988ae2730930de6de0894e39d027829270d234969c5686b",
     "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "fca02a21261b291fd94001baa2294e7b2fa45b18b0c0403848f045763b41bf15",
     "packages/session-ui/src/v2/components/preview-nav-state.test.ts": "cec09a8b3c08ab16581d3d5b6ff704584b3c87d81c25e8af20f6f00272f3593f",
     "packages/session-ui/src/v2/components/preview-nav-state.ts": "ccaeb94d1ab39271f5dcd49c935c8fc7b54d4ffbd66e1352e4d797c9205553fc",
+    "packages/session-ui/src/v2/components/preview-view-state.ts": "4ec961c7720417166dcccd45f0d4702afec664dfe7f4d0dd8668bb9b1d8af5e6",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "fc06f46ed3c92c8066744da1f6ac97db7d8b7d2aeec5ef776d743dd93b317936",
     "packages/session-ui/src/v2/components/session-review-v2.css": "bb306f226fda8f8ba6cf0ae706843ba9f2b48f3a3446433515e8a8dd1f9dc626",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "4151286efb6e0e148246ee3eebae24a2e5d4eac2603fd5ea8546d0839a694161",
@@ -840,7 +841,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-15T19:28:37.570Z",
+  "extracted_at": "2026-09-21T20:51:10.579Z",
   "per_package": {
     "packages/app": {
       "A": 164,
@@ -873,7 +874,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 39,
+      "A": 40,
       "M": 32,
       "D": 0
     },
@@ -884,7 +885,7 @@
     }
   },
   "counts": {
-    "overlay_total": 818,
+    "overlay_total": 819,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1612,6 +1613,7 @@
     "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "A",
     "packages/session-ui/src/v2/components/preview-nav-state.test.ts": "A",
     "packages/session-ui/src/v2/components/preview-nav-state.ts": "A",
+    "packages/session-ui/src/v2/components/preview-view-state.ts": "A",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "M",
     "packages/session-ui/src/v2/components/session-review-v2.css": "M",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "M",

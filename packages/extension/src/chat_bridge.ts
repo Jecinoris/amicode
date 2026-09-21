@@ -12,6 +12,7 @@ import { stopSurvivingServer } from "./rebuild/server_teardown";
 import { hashDirectoryTree, shouldSkipBinaryBuild } from "./server_handshake";
 import { readCachedOverlayHash, writeCachedOverlayHash } from "./rebuild/overlay_cache";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
+import { resolveLatexTarget } from "./latex_compile";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -197,6 +198,91 @@ export interface BridgeIo {
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
   !!msg && typeof msg === "object" && (msg as { source?: unknown }).source === "amicode";
+
+// #1253: LaTeX compile coordinator. Cmd+S in a .tex posts `run-latex`; we run
+// `latexmk` in the file's OWN directory (never workspace-folder-0), with an
+// argument vector (never a shell string), debounced and serialized per output
+// PDF so rapid saves never overlap. Availability is detected once. Status
+// (compiling / done / error / unavailable) is relayed back so the Preview can
+// show a spinner and, on done, refresh the companion PDF (#1254).
+type LatexCompileState = { timer?: ReturnType<typeof setTimeout>; running: boolean; pending: boolean };
+const latexCompiles = new Map<string, LatexCompileState>();
+let latexmkAvailable: boolean | undefined;
+const LATEX_DEBOUNCE_MS = 150;
+const LATEX_TIMEOUT_MS = 120_000;
+
+function detectLatexmk(): Promise<boolean> {
+  if (latexmkAvailable !== undefined) return Promise.resolve(latexmkAvailable);
+  return import("node:child_process")
+    .then(
+      ({ execFile }) =>
+        new Promise<boolean>((resolve) => {
+          execFile("latexmk", ["-version"], { timeout: 8000 }, (err) => {
+            latexmkAvailable = !err;
+            resolve(latexmkAvailable);
+          });
+        }),
+    )
+    .catch(() => {
+      latexmkAvailable = false;
+      return false;
+    });
+}
+
+async function runLatexmk(
+  target: { dir: string; base: string; pdf: string },
+  tab: string | undefined,
+  io: BridgeIo,
+): Promise<void> {
+  const texFile = path.join(target.dir, target.base);
+  const state = latexCompiles.get(target.pdf) ?? { running: false, pending: false };
+  latexCompiles.set(target.pdf, state);
+  if (state.running) {
+    // A compile is already in flight for this output — coalesce to one re-run.
+    state.pending = true;
+    return;
+  }
+  const post = (extra: Record<string, unknown>) =>
+    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
+
+  if (!(await detectLatexmk())) {
+    post({ state: "unavailable" });
+    return;
+  }
+  state.running = true;
+  post({ state: "compiling" });
+  const { execFile } = await import("node:child_process");
+  execFile(
+    "latexmk",
+    ["-pdf", "-interaction=nonstopmode", target.base],
+    { cwd: target.dir, timeout: LATEX_TIMEOUT_MS },
+    (err, _stdout, stderr) => {
+      state.running = false;
+      post({
+        state: err ? "error" : "done",
+        error: err ? (stderr?.trim().slice(0, 500) || err.message) : undefined,
+      });
+      if (state.pending) {
+        state.pending = false;
+        void runLatexmk(target, tab, io);
+      }
+    },
+  );
+}
+
+function scheduleLatexCompile(
+  target: { dir: string; base: string; pdf: string },
+  tab: string | undefined,
+  io: BridgeIo,
+): void {
+  const state = latexCompiles.get(target.pdf) ?? { running: false, pending: false };
+  latexCompiles.set(target.pdf, state);
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = setTimeout(() => {
+    state.timer = undefined;
+    void runLatexmk(target, tab, io);
+  }, LATEX_DEBOUNCE_MS);
+}
 
 /** The optional model selection on the report-a-bug command (amicode#249):
  *  providerID + modelID + optional variant, all bounded strings. Returns
@@ -396,6 +482,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
       if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
     })();
+    return true;
+  }
+
+  // LaTeX compile (#1253): the preview editor posts this after saving a .tex.
+  // Run latexmk in the file's own directory, refusing any path outside the
+  // workspace/session roots. Debounced + serialized per output PDF. Status is
+  // relayed back for the Preview spinner and the companion-PDF refresh (#1254).
+  if (msg.kind === "run-latex") {
+    const rawFile = typeof (msg as { file?: unknown }).file === "string" ? ((msg as { file?: unknown }).file as string) : "";
+    const tab = (msg as { tab?: string }).tab;
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+    const target = resolveLatexTarget(rawFile, roots);
+    if (!target.ok) return true; // invalid / uncontained / non-tex — ignore silently
+    scheduleLatexCompile(target, tab, io);
     return true;
   }
 
