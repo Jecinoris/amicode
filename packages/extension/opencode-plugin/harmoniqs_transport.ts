@@ -5,5 +5,5 @@ export function applyHarmoniqsHeaders(
 ): void {
   if (input.model.providerID !== "harmoniqs") return;
   output.headers["X-Session-Id"] = input.sessionID;
-  output.headers["Idempotency-Key"] = `amicode:${input.sessionID}:${input.message.id}`;
+  output.headers["Idempotency-Key"] = `amicode:${input.sessionID}:${crypto.randomUUID()}`;
 }
