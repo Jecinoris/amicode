@@ -593,4 +593,178 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       }
     });
   });
+
+  // ── #1378 (D3 resolver WIRED into dispatch + handleUpgrade) ─────────────────
+  // The resolver (`resolveAmicodeTarget`) was built and tested (Slice 2, #1342)
+  // with ZERO production callers — this wiring slice connects it into the live
+  // request path for engine-armed (non-client) fleet machines. A PEER branch in
+  // dispatch() now reads the D6 attachment pointer and D7 keeper pointer
+  // per-request, calls the resolver, and routes to the matching upstream:
+  //   - "keeper"  → fleetPlane.keeper   (the roster's registry)
+  //   - "attached"→ fleetPlane.attached (the currently-attached server)
+  //   - "local"   → local route table / engine proxy (D3's fail-safe default)
+  // The CLIENT→HUB path is byte-unchanged (tested by the outer describe's ACs).
+  describe("#1378 — peer branch: D3 resolver WIRED into dispatch() for engine-armed fleet machines", () => {
+    let keeperStub: StubHost;
+    let attachedStub: StubHost;
+    let peerDir: string;
+    let peerKeeperFile: string;
+    let peerAttachmentFile: string;
+    const savedPeerEnv: Record<string, string | undefined> = {};
+
+    beforeAll(async () => {
+      peerDir = mkdtempSync(join(tmpdir(), "amicode-peer-1378-"));
+      peerKeeperFile = join(peerDir, "keeper.json");
+      peerAttachmentFile = join(peerDir, "attachment.json");
+      for (const k of ["AMICO_FLEET_KEEPER_FILE", "AMICO_FLEET_ATTACHMENT_FILE"]) {
+        savedPeerEnv[k] = process.env[k];
+      }
+      process.env.AMICO_FLEET_KEEPER_FILE = peerKeeperFile;
+      process.env.AMICO_FLEET_ATTACHMENT_FILE = peerAttachmentFile;
+      keeperStub = await startStubHost([], HUB_PASSWORD);
+      attachedStub = await startStubHost([], HUB_PASSWORD);
+      expect(keeperStub.url).not.toBe(attachedStub.url); // genuinely distinct
+      // Write pointer files — the resolver reads these per-request
+      writeKeeperPointerFile({ sshAlias: "keeper-alias", transport: "ssh" }, { keeperFile: peerKeeperFile });
+      writeAttachmentPointerFile(
+        { sshAlias: "attached-alias", transport: "ssh", machine_id: "peer-attached-01" },
+        { attachmentFile: peerAttachmentFile },
+      );
+    });
+
+    afterAll(async () => {
+      await keeperStub.stop();
+      await attachedStub.stop();
+      for (const [k, v] of Object.entries(savedPeerEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      rmSync(peerDir, { recursive: true, force: true });
+    });
+
+    /** A PEER relay: engine-armed, non-client, fleet mode, with attached + keeper. */
+    function bootPeerRelay() {
+      return createAmicodeService({
+        password: SERVICE_PASSWORD,
+        shelf: { distRoot: dist },
+        engine: { getUrl: () => undefined }, // engine-armed (EngineProxy created) — no URL for this test
+        fleet: {
+          client: false,
+          entitlements: ["amicissimo"],
+          overlaySource,
+          hub: { getUrl: () => host.url },
+          getMode: () => "fleet",
+          attached: { getUrl: () => attachedStub.url },
+          keeper: { getUrl: () => keeperStub.url },
+          posture: { hubDownConsecutiveNoResponses: 2, recoveryConsecutiveHealthy: 2 },
+          dataPlaneTimeoutMs: 400,
+        },
+      });
+    }
+
+    it("AC2 — /amicode/vaults routes to the ATTACHED upstream (not local, not the keeper)", async () => {
+      const svc = bootPeerRelay();
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const attachedBefore = attachedStub.requests.length;
+      const keeperBefore = keeperStub.requests.length;
+      try {
+        const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { ok: boolean; host_marker?: string };
+        expect(body.host_marker).toBe(HOST_AMICODE_MARKER); // came from the upstream, not local
+        // the ATTACHED stub received the request
+        expect(attachedStub.requests.slice(attachedBefore).some((r) => r.startsWith("GET /amicode/vaults"))).toBe(true);
+        // the KEEPER stub did NOT
+        expect(keeperStub.requests.slice(keeperBefore).some((r) => r.startsWith("GET /amicode/vaults"))).toBe(false);
+      } finally {
+        await svc.stop();
+      }
+    });
+
+    it("AC2 — /amicode/roster routes to the KEEPER upstream (not the attached)", async () => {
+      const svc = bootPeerRelay();
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const keeperBefore = keeperStub.requests.length;
+      const attachedBefore = attachedStub.requests.length;
+      try {
+        const res = await fetch(`${origin}/amicode/roster`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { ok: boolean; host_marker?: string };
+        expect(body.host_marker).toBe(HOST_AMICODE_MARKER);
+        expect(keeperStub.requests.slice(keeperBefore).some((r) => r === "GET /amicode/roster")).toBe(true);
+        expect(attachedStub.requests.slice(attachedBefore).some((r) => r === "GET /amicode/roster")).toBe(false);
+      } finally {
+        await svc.stop();
+      }
+    });
+
+    it("AC2 — /amicode/fleet/status stays LOCAL (never proxied to keeper or attached)", async () => {
+      const svc = bootPeerRelay();
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const keeperBefore = keeperStub.requests.length;
+      const attachedBefore = attachedStub.requests.length;
+      try {
+        const res = await fetch(`${origin}/amicode/fleet/status`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { ok: boolean; mode: string; host_marker?: string };
+        expect(body.mode).toBe("fleet"); // the local fleet-plane status
+        expect(body.host_marker).toBeUndefined(); // NOT from a remote stub
+        expect(keeperStub.requests.length).toBe(keeperBefore);
+        expect(attachedStub.requests.length).toBe(attachedBefore);
+      } finally {
+        await svc.stop();
+      }
+    });
+
+    it("AC5 — empty attachment pointer → routes to LOCAL (the resolver's fail-safe)", async () => {
+      clearAttachmentPointerFile({ attachmentFile: peerAttachmentFile });
+      try {
+        const svc = bootPeerRelay();
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        const attachedBefore = attachedStub.requests.length;
+        const keeperBefore = keeperStub.requests.length;
+        try {
+          const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as { ok: boolean; host_marker?: string };
+          // Served LOCALLY (by the route table), NOT by attached or keeper
+          expect(body.host_marker).toBeUndefined();
+          expect(body.ok).toBe(true);
+          expect(attachedStub.requests.length).toBe(attachedBefore);
+          expect(keeperStub.requests.length).toBe(keeperBefore);
+        } finally {
+          await svc.stop();
+        }
+      } finally {
+        // Restore the pointer for subsequent tests
+        writeAttachmentPointerFile(
+          { sshAlias: "attached-alias", transport: "ssh", machine_id: "peer-attached-01" },
+          { attachmentFile: peerAttachmentFile },
+        );
+      }
+    });
+
+    it("AC5 — corrupt attachment pointer → routes to LOCAL (the fail-safe, never a throw)", async () => {
+      writeFileSync(peerAttachmentFile, "{{{ not valid json");
+      try {
+        const svc = bootPeerRelay();
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        const attachedBefore = attachedStub.requests.length;
+        try {
+          const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as { ok: boolean; host_marker?: string };
+          expect(body.host_marker).toBeUndefined(); // local
+          expect(attachedStub.requests.length).toBe(attachedBefore);
+        } finally {
+          await svc.stop();
+        }
+      } finally {
+        writeAttachmentPointerFile(
+          { sshAlias: "attached-alias", transport: "ssh", machine_id: "peer-attached-01" },
+          { attachmentFile: peerAttachmentFile },
+        );
+      }
+    });
+  });
 });
