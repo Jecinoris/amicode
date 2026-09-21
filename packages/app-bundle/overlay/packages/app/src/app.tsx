@@ -1,7 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
-import { adoptWorkspaceProjects, workspaceProjects } from "@/utils/amicode-workspace-projects"
+import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -67,6 +67,8 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
+import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import LegacyLayout from "@/pages/layout"
@@ -548,6 +550,19 @@ function AmicodeThemeBridge() {
 // switches resolve synchronously from the sync cache. resolve() dedupes
 // in-flight requests and short-circuits already-cached sessions, so this is
 // a no-op on warm state.
+
+/** Safe localStorage read for the debug badge gate. When browser storage is
+ *  restricted (incognito, iframe sandbox, storage policy), the getter or
+ *  getItem can throw — optional chaining alone doesn't catch that. Return
+ *  false on any failure so the app stays renderable. */
+function isDebugBadgeEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("amicode_debug_badge") === "1"
+  } catch {
+    return false
+  }
+}
+
 /** #1290 debug badge (temporary — the send-blank chase): bottom-right, tiny,
  *  inert. Shows the running build + whether the frozen-hold registry has a
  *  snapshot. When the pane disappears, read this: `hold:n` = the registry
@@ -824,7 +839,7 @@ function SessionLineagePrewarmer() {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
         continue
       }
-      let recent: Array<{ id: string }> = []
+      let recent: Array<SessionV2Info> = []
       try {
         const ctx = global.ensureServerCtx(conn)
         const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
@@ -850,7 +865,7 @@ function SessionLineagePrewarmer() {
         // (every other consumer normalizes at the boundary; the raw
         // object crashed the tab strip's render on the real hub).
         try {
-          sync.session.remember(normalizeSessionInfo(info))
+          sync.session.remember(normalizeSessionInfo(info as SessionInfo))
         } catch {
           /* best-effort */
         }
@@ -1124,10 +1139,12 @@ export function AppInterface(props: {
                   <TabsProvider>
                     <AmicodeNavigateBridge />
                     <SessionLineagePrewarmer />
-                    {/* #1287: gate on the actual boolean — the enclosing Show
-                        keys on newLayoutDesigns().toString(), which is truthy
-                        for BOTH values, so it never gated the badge. */}
-                    <Show when={useSettings().general.newLayoutDesigns()}>
+                    {/* #1287/#1290 debug badge — opt-in via localStorage so it
+                        never shows to users by default. Enable:
+                        localStorage.setItem("amicode_debug_badge","1") + reload.
+                        The badge, its RAF ring, error shipper, and diagnostic
+                        intervals only mount when the flag is set. */}
+                    <Show when={useSettings().general.newLayoutDesigns() && isDebugBadgeEnabled()}>
                       <HoldDebugBadge />
                     </Show>
                     <PermissionProvider>
@@ -1147,7 +1164,7 @@ export function AppInterface(props: {
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
                               <ErrorBoundary fallback={() => <SessionPanelHold />}>
-                                <Suspense fallback={() => <SessionPanelHold />}>
+                                <Suspense fallback={<SessionPanelHold />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>
@@ -1222,6 +1239,7 @@ function NewSessionLanding() {
   const tabs = useTabs()
   const global = useGlobal()
   const navigate = useNavigate()
+  const [showEmpty, setShowEmpty] = createSignal(false)
 
   const land = () => {
     // #1291 diagnostic hook — one build cycle to pinpoint the gate
@@ -1235,6 +1253,7 @@ function NewSessionLanding() {
     // If there's already a session or draft tab, navigate to it
     const existing = tabs.store.find((tab) => tab.type === "session" || tab.type === "draft")
     if (existing) {
+      setShowEmpty(false)
       dbg({ gate: "existing-tab", href: tabHref(existing) })
       navigate(tabHref(existing), { replace: true })
       return
@@ -1252,13 +1271,26 @@ function NewSessionLanding() {
     // on a fresh profile and for servers running outside any registered project
     // (the amicode chat server spawns in an internal scaffold dir). Falling back
     // to a server-known worktree keeps this route from rendering nothing at all.
+    //
+    // Read workspaceProjects() FIRST so the createEffect in LandingEffect
+    // subscribes to the reactive store that adoptWorkspaceProjects writes.
+    // Without this read, adding a folder via the extension host updates the
+    // store but the effect never re-runs — showEmpty stays true forever.
     const ctx = global.ensureServerCtx(conn)
-    const directory = resolveLandingDirectory(ctx.projects.list(), ctx.sync.data.project[0]?.worktree)
+    const wsProjects = workspaceProjects()
+    const directory = resolveLandingDirectory(
+      wsProjects.length > 0 ? wsProjects : ctx.projects.list(),
+      ctx.sync.data.project[0]?.worktree,
+    )
     if (!directory) {
-      dbg({ gate: "no-directory", projects: ctx.projects.list().length, syncProjects: ctx.sync.data.project?.length ?? -1 })
-      return // nothing to land on yet — re-renders when sync arrives
+      dbg({ gate: "no-directory", projects: ctx.projects.list().length, wsProjects: wsProjects.length, syncProjects: ctx.sync.data.project?.length ?? -1 })
+      // No workspace folder open — show the v2 empty-workspace landing
+      // instead of rendering nothing at all (the blank-screen gap).
+      setShowEmpty(true)
+      return
     }
 
+    setShowEmpty(false)
     dbg({ gate: "newDraft", directory })
     tabs.newDraft({ server: ServerConnection.key(conn), directory }, "").catch((err) => {
       dbg({ gate: "newDraft-error", err: String(err?.message ?? err) })
@@ -1268,9 +1300,25 @@ function NewSessionLanding() {
   return (
     <Show when={tabs.ready()} fallback={null}>
       <LandingEffect land={land} />
+      <Show when={showEmpty()}>
+        <Suspense>
+          <EmptyWorkspaceLanding />
+        </Suspense>
+      </Show>
     </Show>
   )
 }
+
+/** Lightweight v2 landing shown when no workspace folder is open. Renders the
+ *  Amicode mark + an "Open a folder" prompt in the same visual frame as the
+ *  normal new-session view, and populates the titlebar controls so the app
+ *  never appears empty. The createEffect in LandingEffect keeps running: the
+ *  moment a workspace folder arrives (the extension pushes it), the draft
+ *  resolves and this component unmounts.
+ *
+ *  lazy() keeps the chunk off the critical path; the <Suspense> in the parent
+ *  catches the suspension while the chunk loads. */
+const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing"))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the
