@@ -1300,6 +1300,21 @@ function NewSessionLanding() {
   const navigate = useNavigate()
 
   const land = () => {
+    // #1310: THE LANDING ONLY ACTS ON THE LANDING ROUTE — read from the
+    // BROWSER, not the router. The landing effect is reactive on
+    // tabs.store: during a session switch the NEW route's effect pushes
+    // the session tab while the OLD route (this one) is still mounted
+    // inside the pending transition, re-triggering land(), whose
+    // navigate-to-existing-tab/newDraft started a SECOND router
+    // transition — and the router is last-call-wins: the switch's
+    // transition no-ops, the landing's wins, and the router wedges into a
+    // land↔addSessionTab feedback loop (~4-5 cycles/s, forever in the rig,
+    // ~an SSE event's arrival — the 8.2s — on the hub). The ROUTER's
+    // location is stale-by-design under a pending transition (it read "/"
+    // mid-switch, defeating the naive guard); window.location is the
+    // browser truth and already the target route the moment the click
+    // lands.
+    if (window.location.pathname !== "/") return
     // #1291 diagnostic hook — one build cycle to pinpoint the gate
     const w = globalThis as { __landingDebug?: unknown[] }
     w.__landingDebug = w.__landingDebug ?? []

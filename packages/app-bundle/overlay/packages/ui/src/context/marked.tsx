@@ -569,7 +569,14 @@ async function highlightCodeBlocks(html: string): Promise<string> {
   const highlighter = await getSharedHighlighter({
     themes: ["OpenCode"],
     langs: [],
-    preferredHighlighter: "shiki-wasm",
+    // #1308: the wasm engine's dynamic import("shiki/wasm") NEVER SETTLED in
+    // the browser build (no .wasm asset is emitted; the loader's fetch dies
+    // silently) — the gated MarkedProvider stayed not-ready, the route
+    // transition froze behind it, and every session switch held the frozen
+    // previous view for the highlighter's lifetime (~8s on the hub, forever in
+    // the rig). The JS regex engine is shiki's default, ships zero assets,
+    // and initializes synchronously.
+    preferredHighlighter: "javascript",
   })
 
   let result = html
@@ -622,7 +629,14 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
           const highlighter = await getSharedHighlighter({
             themes: ["OpenCode"],
             langs: [],
-            preferredHighlighter: "shiki-wasm",
+            // #1308: the wasm engine's dynamic import("shiki/wasm") NEVER SETTLED in
+    // the browser build (no .wasm asset is emitted; the loader's fetch dies
+    // silently) — the gated MarkedProvider stayed not-ready, the route
+    // transition froze behind it, and every session switch held the frozen
+    // previous view for the highlighter's lifetime (~8s on the hub, forever in
+    // the rig). The JS regex engine is shiki's default, ships zero assets,
+    // and initializes synchronously.
+    preferredHighlighter: "javascript",
           })
           if (!(lang in bundledLanguages)) {
             lang = "text"
