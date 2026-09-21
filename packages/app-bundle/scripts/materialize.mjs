@@ -108,27 +108,6 @@ for (const rel of manifest.deletions ?? []) {
 }
 if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions`);
 
-// ── keep the terminal agent turn valid for Bedrock Converse ─────────────────
-// v1.18.29 ends a max-step request with an assistant prefill, which Bedrock
-// rejects. This server-side fix is not part of the app-only overlay.
-{
-  const promptPath = join(outDir, "packages", "opencode", "src", "session", "prompt.ts");
-  const source = readFileSync(promptPath, "utf8");
-  const messages = '...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS_PROMPT }] : []),';
-  const toolChoice = 'toolChoice: format.type === "json_schema" ? "required" : undefined,';
-  const fixed = source
-    .replace(messages, '...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : []),')
-    .replace(toolChoice, 'toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,');
-  if (!fixed.includes('...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS_PROMPT }] : []),')) {
-    throw new Error("materialize could not apply the Bedrock-safe max-steps prompt fix");
-  }
-  if (!fixed.includes('toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,')) {
-    throw new Error("materialize could not disable tools on the terminal agent turn");
-  }
-  if (fixed !== source) writeFileSync(promptPath, fixed);
-  console.log("[materialize] ensured Bedrock-safe terminal agent turn");
-}
-
 // ── force a single effect version (dedupe the toJsonSchemaDocument crash) ────
 // Upstream pins effect via the workspace catalog, but hono-openapi's transitive
 // @standard-community/{standard-json,standard-openapi} declare `effect: ^3.x`,
@@ -137,7 +116,7 @@ if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions
 // Schema.toJsonSchemaDocument (tool params -> JSON schema) varies by build, so
 // some binaries crash on EVERY prompt with
 // "TypeError: undefined is not an object (evaluating 'a.name')" and others do
-// not. An explicit `overrides.effect` collapses the two to one, deterministically.
+// not. A root dependency plus `overrides.effect` collapses the two to one.
 // Injected into the materialized root package.json (not manifest-tracked) so it
 // survives upstream bumps without carrying an overlay copy of the whole file.
 {
@@ -146,6 +125,7 @@ if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions
   const pinned = rootPkg.workspaces?.catalog?.effect;
   if (pinned) {
     rootPkg.overrides = { ...(rootPkg.overrides ?? {}), effect: pinned };
+    rootPkg.devDependencies = { ...(rootPkg.devDependencies ?? {}), effect: pinned };
     writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
     console.log(`[materialize] pinned single effect@${pinned} via overrides (dedupe)`);
   } else {
