@@ -127,6 +127,9 @@ if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions
     rootPkg.overrides = { ...(rootPkg.overrides ?? {}), effect: pinned };
     rootPkg.devDependencies = { ...(rootPkg.devDependencies ?? {}), effect: pinned };
     writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
+    // The copied upstream lock retains its split transitive resolution. Recreate
+    // it after pinning so Bun can apply the single-version graph to the build.
+    rmSync(join(outDir, "bun.lock"), { force: true });
     console.log(`[materialize] pinned single effect@${pinned} via overrides (dedupe)`);
   } else {
     console.warn("[materialize] WARNING: no catalog effect pin found — skipping effect dedupe");
