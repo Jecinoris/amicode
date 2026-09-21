@@ -677,6 +677,17 @@ def handle(c, addr, cid):
                     c.close(); return
                 passthrough_capture(c, first, key=None)
                 return
+            # #1309: document-ish routes (SPA deep links like /server/{b64}/...)
+            # have no file extension. Falling through to the backend served
+            # opencode's ANCIENT embedded app (no badge, months-old UI) on
+            # every webview reload that re-requested a deep document URL.
+            # Serve the CURRENT app for all of them — the embedded app is
+            # dead forever.
+            import re as _re0
+            if ("." not in path.split("?")[0].split("/")[-1]
+                and not path.startswith(("/api/", "/event", "/global/", "/experimental/", "/session", "/config", "/provider", "/path", "/project", "/command", "/agent", "/permission", "/question", "/mcp", "/lsp", "/vcs", "/file", "/touched", "/amico", "/snapshot", "/__amicode", "/__test", "/asset"))):
+                if app_dist_serve(c, "/"):
+                    return
             key = path
             hit = cache_get(key)
             if hit is not None:
