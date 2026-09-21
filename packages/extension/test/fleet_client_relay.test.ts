@@ -766,5 +766,86 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
         );
       }
     });
+
+    it("AC4 — handleUpgrade routes WebSocket upgrades through the same resolver (attached target)", async () => {
+      // Dedicated upgrade-capable stubs — the resolver routes /pty/test/connect
+      // to "attached" (it is not an /amicode/fleet/* path).
+      const attachedUpgrades: string[] = [];
+      const keeperUpgrades: string[] = [];
+      const makeUpgradeStub = (bag: string[]): Promise<{ url: string; stop: () => Promise<void> }> =>
+        new Promise((resolve) => {
+          const s = http.createServer();
+          s.on("upgrade", (req, socket) => {
+            bag.push(req.url ?? "");
+            // Respond with a valid 101 so the relay's pipe completes cleanly
+            socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+            setTimeout(() => {
+              try {
+                socket.end();
+              } catch {
+                /* already gone */
+              }
+            }, 50);
+          });
+          s.listen(0, "127.0.0.1", () => {
+            const port = (s.address() as AddressInfo).port;
+            resolve({ url: `http://127.0.0.1:${port}`, stop: () => new Promise((r) => s.close(() => r())) });
+          });
+        });
+      const attachedWS = await makeUpgradeStub(attachedUpgrades);
+      const keeperWS = await makeUpgradeStub(keeperUpgrades);
+      const svc = createAmicodeService({
+        password: SERVICE_PASSWORD,
+        shelf: { distRoot: dist },
+        engine: { getUrl: () => undefined },
+        fleet: {
+          client: false,
+          entitlements: ["amicissimo"],
+          overlaySource,
+          hub: { getUrl: () => host.url },
+          getMode: () => "fleet",
+          attached: { getUrl: () => attachedWS.url },
+          keeper: { getUrl: () => keeperWS.url },
+          posture: { hubDownConsecutiveNoResponses: 2, recoveryConsecutiveHealthy: 2 },
+          dataPlaneTimeoutMs: 400,
+        },
+      });
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      try {
+        // Send a raw HTTP upgrade request for a non-fleet path → resolver says
+        // "attached". The relay should forward the upgrade to the attached stub.
+        const url = new URL(`${origin}/pty/test-terminal/connect`);
+        await new Promise<void>((resolve) => {
+          const req = http.request(
+            {
+              hostname: url.hostname,
+              port: url.port,
+              path: url.pathname,
+              method: "GET",
+              headers: {
+                Connection: "Upgrade",
+                Upgrade: "websocket",
+                "Sec-WebSocket-Key": "dGVzdA==",
+                "Sec-WebSocket-Version": "13",
+              },
+            },
+            () => resolve(),
+          );
+          req.on("upgrade", () => resolve());
+          req.on("error", () => resolve());
+          setTimeout(resolve, 500);
+          req.end();
+        });
+        // The ATTACHED stub received the upgrade
+        expect(attachedUpgrades.length).toBeGreaterThan(0);
+        expect(attachedUpgrades[0]).toContain("/pty/test-terminal/connect");
+        // The KEEPER stub did NOT
+        expect(keeperUpgrades.length).toBe(0);
+      } finally {
+        await svc.stop();
+        await attachedWS.stop();
+        await keeperWS.stop();
+      }
+    });
   });
 });

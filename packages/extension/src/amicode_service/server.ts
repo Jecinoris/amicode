@@ -419,6 +419,25 @@ export class AmicodeServiceServer {
           this.fleetPlane.hub.handleUpgrade(req, socket, head);
           return;
         }
+        // #1378: peer branch — the D3 resolver routes SSE/WebSocket upgrades
+        // to the same target as dispatch() (attached or keeper). The client
+        // path above is byte-unchanged; "local" falls through to socket.destroy
+        // (the engine handles its own upgrades on its native port).
+        if (!this.fleetPlane?.client && this.routingMode === "fleet" && this.fleetPlane?.attached) {
+          const upgradeUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
+          const attachedResult = resolveAttachmentPointer();
+          const keeperResult = resolveKeeperPointer();
+          const { target } = resolveAmicodeTarget(upgradeUrl.pathname, { attached: attachedResult, keeper: keeperResult });
+          if (target === "attached") {
+            this.fleetPlane.attached.handleUpgrade(req, socket, head);
+            return;
+          }
+          if (target === "keeper" && this.fleetPlane.keeper) {
+            this.fleetPlane.keeper.handleUpgrade(req, socket, head);
+            return;
+          }
+          // "local" → fall through to socket.destroy (engine's native port)
+        }
         socket.destroy();
       } catch {
         try {
