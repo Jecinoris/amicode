@@ -484,16 +484,44 @@ function SessionProviders(props: ParentProps) {
  *  route change; t1 = the new timeline's first settled paint (two rAFs
  *  after mount). Rides the ring snapshots — the number that names the
  *  remount cost and decides keep-alive vs remount-tuning. */
-function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
-  const w = globalThis as { __paintT0?: number; __paintRing?: { id: string; ms: number }[] }
+/** #1302: THE gate's fallback — the static clone the user reports
+ *  ("frozen pane, scrollable, loading icon") is THIS Show's fallback, not
+ *  the outlet Suspense's (which never mounts). Stamp mount/unmount per id. */
+function TimelineHoldFallbackProbe(props: {
+  getEl: () => HTMLElement | undefined
+  getScrollTop: () => number
+}) {
+  const w = globalThis as { __cloneRing?: { id: string; at: number; ms: number | null }[] }
+  const id = (useParams<{ id?: string }>().id ?? "?").slice(-14)
   onMount(() => {
-    const t0 = w.__paintT0
+    w.__cloneRing = w.__cloneRing ?? []
+    w.__cloneRing.push({ id, at: Date.now(), ms: null })
+    if (w.__cloneRing.length > 24) w.__cloneRing.shift()
+    const mine = w.__cloneRing[w.__cloneRing.length - 1]
+    onCleanup(() => {
+      mine.ms = Date.now() - mine.at
+    })
+  })
+  return <SessionTimelineHold getEl={props.getEl} getScrollTop={props.getScrollTop} />
+}
+
+function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
+  const w = globalThis as {
+    __paintT0?: Record<string, number>
+    __paintRing?: { id: string; ms: number; at: number }[]
+  }
+  onMount(() => {
+    const t0 = w.__paintT0?.[props.id]
     if (t0 === undefined) return
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         w.__paintRing = w.__paintRing ?? []
-        w.__paintRing.push({ id: props.id.slice(-14), ms: Math.round(performance.now() - t0) })
-        if (w.__paintRing.length > 16) w.__paintRing.shift()
+        w.__paintRing.push({
+          id: props.id.slice(-14),
+          ms: Math.round(performance.now() - t0),
+          at: Date.now(),
+        })
+        if (w.__paintRing.length > 24) w.__paintRing.shift()
       })
     })
   })
@@ -2511,7 +2539,10 @@ export default function Page() {
                 // timeline at its captured scroll position instead of wiping
                 // to a bare spinner; the swap happens the moment the new
                 // session is ready.
-                <SessionTimelineHold getEl={() => timelineHoldEl} getScrollTop={() => timelineHoldScrollTop} />
+                <TimelineHoldFallbackProbe
+                  getEl={() => timelineHoldEl}
+                  getScrollTop={() => timelineHoldScrollTop}
+                />
               }
             >
               {(_id) => (

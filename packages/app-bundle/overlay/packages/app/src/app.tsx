@@ -645,7 +645,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     const briefMap = (m?: Map<string, unknown[]>) =>
       m
         ? Object.fromEntries(
-            [...m.entries()].slice(-12).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
+            [...m.entries()].slice(-32).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-10)]),
           )
         : null
     const shipRings = () => {
@@ -664,10 +664,11 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
-            paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-8) ?? null,
+            paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-12) ?? null,
+            clone: (globalThis as { __cloneRing?: unknown }).__cloneRing?.slice(-12) ?? null,
             hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
-            hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
+            hydrated: w.__mirrorHydrated?.slice(-40) ?? null,
           }),
         )
       } catch {}

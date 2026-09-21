@@ -25,7 +25,12 @@ export function createTimelineModel(input: {
       // session view lands here first; the probe wrapper in session.tsx
       // stamps t1 at the new timeline's first paint.
       try {
-        ;(globalThis as { __paintT0?: number }).__paintT0 = performance.now()
+        // #1302: PER-ID stamps — a global got overstamped by every fetcher
+        // on rapid switches, pairing each mount with the WRONG start time
+        // (the "8s paints" were partly artifacts of fast switching).
+        const w = globalThis as { __paintT0?: Record<string, number> }
+        w.__paintT0 = w.__paintT0 ?? {}
+        w.__paintT0[id] = performance.now()
       } catch {}
       clearRefresh()
       if (!id) return
