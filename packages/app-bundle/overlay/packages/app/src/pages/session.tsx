@@ -158,6 +158,28 @@ async function runPromptRollbackMutation<T, R>(input: {
 let heldPanelEl: HTMLElement | undefined
 let heldPanelScrollTop = 0
 
+/** #1308: wrap SessionPanelHold with the mounting gate's identity — the
+ *  ring names WHICH gate keeps the frozen clone on screen. */
+export function HoldSpy(props: { which: string }) {
+  onMount(() => holdDebug("hold-mount:" + props.which))
+  onCleanup(() => holdDebug("hold-unmount:" + props.which))
+  return <SessionPanelHold />
+}
+
+/** #1308: the hold/lineage forensic ring — read from the e2e rig. Every
+ *  gate transition that decides whether the OLD view stays frozen on
+ *  screen lands here. The live symptom: the static clone holds ~8.2s on
+ *  the real hub and (as the rig proved) indefinitely against an instant
+ *  mock — the rings name the gate that never releases. */
+export function holdDebug(event: string, detail?: unknown): void {
+  // #1308: __gateRing — NOT __holdRing (the #1297 SuspenseHoldProbe owns
+  // that one, and its 16-cap shifted these entries out).
+  const w = globalThis as { __gateRing?: Array<{ at: number; event: string; detail?: unknown }> }
+  w.__gateRing = w.__gateRing ?? []
+  w.__gateRing.push({ at: Date.now(), event, detail })
+  if (w.__gateRing.length > 40) w.__gateRing.shift()
+}
+
 /** #1288: register the last-view content element for the frozen holds.
  *  Session views register through setScrollRef (content-present moments
  *  only — never the mid-mount empty frame); the draft route registers its
@@ -179,6 +201,8 @@ export function heldPanelViewState(): boolean {
 // whole column, chat + composer — dimmed, inert, with a loading pill. First
 // ever boot (no prior view exists) falls back to the centered spinner.
 export function SessionPanelHold() {
+  onMount(() => holdDebug("hold-mount"))
+  onCleanup(() => holdDebug("hold-unmount"))
   return (
     <Show
       when={heldPanelEl}
@@ -237,7 +261,7 @@ export function SessionPanelHold() {
 // falls back to the centered spinner exactly as before.
 function SessionTimelineHold(props: { getEl: () => HTMLDivElement | undefined; getScrollTop: () => number }) {
   return (
-    <Show when={props.getEl()} fallback={<SessionPanelHold />}>
+    <Show when={props.getEl()} fallback={<HoldSpy which="getEl" />}>
       <div class="relative h-full overflow-hidden bg-v2-background-bg-base">
         <div
           ref={(host) => {
@@ -399,6 +423,14 @@ function ResolvedTargetSessionRoute() {
   // never closes again after its first open.
   const heldDirectory = createMemo((prev: string | undefined) => directory() ?? prev, undefined)
   const targetDirectory = () => heldDirectory()!
+  createEffect(() =>
+    holdDebug("lineage-gate", {
+      id: params.id,
+      peeked: !!sync().session.lineage.peek(params.id),
+      directory: directory() ?? null,
+      held: heldDirectory() ?? null,
+    }),
+  )
 
   createEffect(() => {
     const session = current()
@@ -421,7 +453,7 @@ function ResolvedTargetSessionRoute() {
     // Non-keyed: the held memo above means this gate only truly closes before
     // the FIRST lineage resolve (cold deep link on app boot) — afterwards it
     // stays open for the life of the route.
-    <Show when={heldDirectory()} fallback={<SessionPanelHold />}>
+    <Show when={heldDirectory()} fallback={<HoldSpy which="lineage" />}>
       <SDKProvider directory={targetDirectory}>
         <DirectoryDataProvider directory={targetDirectory} server={serverKey}>
           <TargetSessionPage />
@@ -2793,7 +2825,7 @@ export default function Page() {
           }}
         >
           {settings.general.newLayoutDesigns() ? (
-            <Show when={sessionPanelKey()} keyed fallback={<SessionPanelHold />}>
+            <Show when={sessionPanelKey()} keyed fallback={<HoldSpy which="sessionPanelKey" />}>
               {(_) => (
                 <SessionPanelFrame newLayout raised={!!params.id}>
                   <ErrorBoundary fallback={sessionErrorFallback}>{sessionPanelContent()}</ErrorBoundary>

@@ -81,7 +81,7 @@ import { createSessionLineage } from "@/pages/session/session-lineage"
 import { bugDockController } from "@/pages/session/composer/bug-dock-controller"
 import { postBugReportPoke } from "@/utils/amicode-bug-report"
 
-import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, registerHeldPanelView, heldPanelViewState, SessionPanelHold, installLongTaskObserver } from "@/pages/session"
+import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, registerHeldPanelView, heldPanelViewState, SessionPanelHold, installLongTaskObserver, HoldSpy } from "@/pages/session"
 import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
@@ -170,7 +170,7 @@ function TargetServerRoute(props: ParentProps) {
     // Owns the server-identity remount. Session changes must NOT remount this
     // subtree (SessionRouteErrorBoundary resets and createSessionLineage
     // re-resolves reactively instead); both rely on this key for server changes.
-    <Show when={serverKey()} keyed fallback={<SessionPanelHold />}>
+    <Show when={serverKey()} keyed fallback={<HoldSpy which="serverKey" />}>
       <ServerSDKProvider server={conn}>
         <ServerSyncProvider server={conn}>{props.children}</ServerSyncProvider>
       </ServerSDKProvider>
@@ -667,6 +667,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
             paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-12) ?? null,
           longtask: (globalThis as { __longtaskRing?: unknown }).__longtaskRing?.slice(-40) ?? null,
+          gates: (globalThis as { __gateRing?: unknown }).__gateRing?.slice(-40) ?? null,
             clone: (globalThis as { __cloneRing?: unknown }).__cloneRing?.slice(-12) ?? null,
             hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
@@ -1160,7 +1161,7 @@ function ServerKey(props: ParentProps) {
   // server change (a genuinely new key).
   const heldKey = createMemo((prev: string | undefined) => server.key ?? prev, undefined)
   return (
-    <Show when={heldKey()} keyed fallback={<SessionPanelHold />}>
+    <Show when={heldKey()} keyed fallback={<HoldSpy which="heldKey" />}>
       {props.children}
     </Show>
   )
@@ -1221,7 +1222,7 @@ export function AppInterface(props: {
                                   the frozen view through both classes —
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
-                              <ErrorBoundary fallback={() => <SessionPanelHold />}>
+                              <ErrorBoundary fallback={() => <HoldSpy which="errboundary" />}>
                                 <Suspense fallback={() => <SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
