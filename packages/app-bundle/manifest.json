@@ -294,7 +294,7 @@
     "packages/opencode/src/session/rollout.ts": "55518da37d6d4d1298eeab1c7ee208f59b80b7246f3370438de98ad774e4b02e",
     "packages/opencode/src/session/session.ts": "1d94c364a55c3124ba6ab762f599cc4194905d7e23ec91ba79552671cd4d86c7",
     "packages/opencode/src/session/summary.ts": "09f546db362a992156bdb4901cce58e495bd38bab6ba41b4386cca77bebab7f3",
-    "packages/opencode/src/session/system.ts": "c91d00de07d6d4e3910561d59a598579eeafb725583a9d6475a158abdd4a17c4",
+    "packages/opencode/src/session/system.ts": "f607576faf505085c2e31f208f06f45eaec32f0509570fa9cf6e4c130a0a50a5",
     "packages/opencode/src/session/turn-output.ts": "889624ca54a8149d35f200c7efa732771dfca36984e8a322a9781b1a25434762",
     "packages/opencode/src/session/user-mutation.ts": "8f8cebe1370a8a54361c546fb6777ee4fbdd47d0dec1ef870305ce5dbe232208",
     "packages/opencode/src/snapshot/index.ts": "4d76a78c48597bda2379e2c3396f4a53828b21c6ce03e1975d2911150822c6de",
@@ -849,7 +849,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-21T02:29:31.939Z",
+  "extracted_at": "2026-09-21T18:26:00.695Z",
   "per_package": {
     "packages/app": {
       "A": 171,
