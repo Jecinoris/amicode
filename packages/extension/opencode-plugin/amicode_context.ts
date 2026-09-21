@@ -28,6 +28,7 @@ import { buildStackStateBlock } from "./stack_state";
 import { buildRecentSessionsBlock } from "./session_recap";
 import { buildOpenThreadsBlock } from "./open_threads";
 import { buildSetupStateSection } from "./setup_state";
+import { applyHarmoniqsHeaders } from "./harmoniqs_transport";
 
 console.error("[amicode-context] loaded — stack-state + session-recap + mode-block injection plugin");
 
@@ -107,6 +108,12 @@ export const AmicodeContext = async (input: unknown) => {
         console.error(`[amicode-context] buildOpenThreadsBlock failed: ${e instanceof Error ? e.message : String(e)}`);
         // Never throw — graceful degradation: no digest is better than a crash.
       }
+    },
+    "chat.headers": async (
+      input: { sessionID: string; model: { providerID: string }; message: { id: string } },
+      output: { headers: Record<string, string> },
+    ): Promise<void> => {
+      applyHarmoniqsHeaders(input, output);
     },
   };
 };
