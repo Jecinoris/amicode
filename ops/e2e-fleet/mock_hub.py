@@ -123,6 +123,13 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *a):
+        try:
+            line = fmt % a
+            if "GET /" in line or "POST" in line:
+                with open("/tmp/e2e_mock_requests.log", "a") as f:
+                    f.write(line.split('"')[1] + "\n" if '"' in line else line + "\n")
+        except Exception:
+            pass
         print(f"REQ {self.path} {fmt % a}", flush=True)
 
     def _delay(self):
@@ -343,6 +350,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/config"):
             self._json({"default_agent": "plan"})
+            return
+        if path == "/snapshot":
+            # #1306: the hub frontdoor's snapshot contract — the whole recent
+            # fleet state in ONE request (v1 shapes; trimmed list = sessions
+            # whose pages had oversized tool strings cut by the frontdoor).
+            top = 30
+            for kv in self.path.split("?", 1)[1].split("&") if "?" in self.path else []:
+                if kv.startswith("top="):
+                    try: top = max(1, min(int(kv[4:]), 100))
+                    except Exception: pass
+            snap = {
+                "snapshot": 1,
+                "ts": time.time(),
+                "health": {"healthy": True, "version": "1.18.29"},
+                "sessions": SESSIONS,
+                "messages": {s["id"]: messages_for(s["id"]) for s in SESSIONS[:top]},
+                "trimmed": [],
+            }
+            self._json(snap)
             return
         if path == "/session" or path.startswith("/session?"):
             if "limit" in self.path:

@@ -174,6 +174,23 @@ def run(debug_port, app_port, latency_ms):
     d.install_observer()
     boot_blank, _ = d.blank_ms()
 
+    # #1306 SNAPSHOT FLOW: boot must fetch the snapshot exactly once, and
+    # no other message/snapshot wire work beyond the app's normal boot
+    # (the snapshot seeds the store — the warm's list+prefetch storm is
+    # gone). Seeded sessions must switch with ZERO message fetches.
+    def mock_requests():
+        try:
+            return [l.strip() for l in open("/tmp/e2e_mock_requests.log") if l.strip()]
+        except Exception:
+            return []
+    snap_n = sum(1 for r in mock_requests() if r.startswith("GET /snapshot"))
+    print("  snapshot-boot: prewarm=", d.ev("JSON.stringify(globalThis.__amicodePrewarm ?? null)"),
+          "err=", d.ev("JSON.stringify(globalThis.__amicodePrewarmErr ?? null)"),
+          "seeded=", d.ev("JSON.stringify(globalThis.__snapshotSeeded ?? [])"))
+    assert snap_n == 1, f"snapshot flow: expected exactly 1 GET /snapshot, saw {snap_n}"
+    list_n = sum(1 for r in mock_requests() if r.startswith("GET /session?") or r == "GET /session HTTP/1.1")
+    assert list_n <= 3, f"snapshot flow: session-list refetch storm? saw {list_n} list GETs at boot"
+
     # Flow 1: open the sessions list, then two sessions, and switch tabs.
     # The list arrives over the (latency-delayed) wire — poll, don't sleep.
     cards = 0
@@ -187,6 +204,10 @@ def run(debug_port, app_port, latency_ms):
         raise AssertionError("session cards not found — the mock's list shape needs updating")
     assert d.click_card("Alpha test session") == "ok"
     time.sleep(6)
+    alpha_n = sum(1 for r in mock_requests() if "/ses_test_alpha_0001/message" in r)
+    assert alpha_n == 0, f"snapshot flow: seeded Alpha switch still fetched its page {alpha_n}x"
+    beta_n = sum(1 for r in mock_requests() if "/ses_test_beta_0002/message" in r)
+    assert beta_n == 0, f"snapshot flow: seeded Beta fetched its page {beta_n}x before first switch"[:120]
     d.open_sessions_view()
     time.sleep(4)
     assert d.click_card("Beta test session") == "ok"
