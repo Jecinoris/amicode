@@ -43,9 +43,9 @@
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
-    "packages/llm/src/provider-error.ts": "b623fc2106b3a1749e2411f77ec4f632964bed12b99ae4d4e77f6c655e57c505",
+    "packages/llm/src/provider-error.ts": "65b9124905f0755c1e368df5150aa211bea3cc29afb66845b5ceaccba10042dd",
     "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
-    "packages/llm/test/provider-error.test.ts": "7354a4115e0fad9beeb4d824b34a4d659fd776539c0569a20aea4aca3cb32372",
+    "packages/llm/test/provider-error.test.ts": "ac3bf099319acdc27ff47ea79fd74357d55e12ab95131a07a72a5a2a9bc0c08f",
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
     "packages/opencode/script/httpapi-exercise.ts": "772bd2cf5748ca90c5d5790c2d044237518cc8ede0411fc4ba28b9d7440ba28c",
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
@@ -851,7 +851,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-21T17:09:47.901Z",
+  "extracted_at": "2026-09-21T17:30:46.454Z",
   "per_package": {
     "packages/app": {
       "A": 171,
