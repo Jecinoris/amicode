@@ -897,24 +897,41 @@ function SessionLineagePrewarmer() {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
         continue
       }
-      for (const info of recent) {
-        // #1294c: seed data.info from the list payload — zero wire cost.
-        // The v2 list objects carry location:{directory} with NO
-        // top-level directory/slug/path — normalizeSessionInfo maps them
-        // (every other consumer normalizes at the boundary; the raw
-        // object crashed the tab strip's render on the real hub).
-        try {
-          sync.session.remember(normalizeSessionInfo(info))
-        } catch {
-          /* best-effort */
+      // #1304: the warm runs as a BOUNDED QUEUE (3 concurrent), never a
+      // storm. The old loop voided all ~32 sessions' lineage+prefetch
+      // chains at once — saturating the browser's 6-connection pool to
+      // the hub, so a switch's foreground render fetch queued behind the
+      // whole pass: the constant ~8.2s paints (vs 1.4s when a switch
+      // happened to land BETWEEN passes). Background warming must never
+      // occupy the pool the foreground needs.
+      const WARM_CONCURRENCY = 3
+      let cursor = 0
+      const workers = Array.from({ length: WARM_CONCURRENCY }, async () => {
+        while (cursor < recent.length) {
+          const info = recent[cursor++]
+          // #1294c: seed data.info from the list payload — zero wire cost.
+          // The v2 list objects carry location:{directory} with NO
+          // top-level directory/slug/path — normalizeSessionInfo maps
+          // them (every other consumer normalizes at the boundary; the
+          // raw object crashed the tab strip's render on the real hub).
+          try {
+            sync.session.remember(normalizeSessionInfo(info))
+          } catch {
+            /* best-effort */
+          }
+          try {
+            if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
+              await sync.session.lineage.resolve(info.id)
+            }
+            if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
+              await sync.session.prefetch(info.id, BULK_WARM_MESSAGES)
+            }
+          } catch {
+            /* best-effort */
+          }
         }
-        if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
-          void sync.session.lineage.resolve(info.id).catch(() => {})
-        }
-        if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
-          void sync.session.prefetch(info.id, BULK_WARM_MESSAGES).catch(() => {})
-        }
-      }
+      })
+      await Promise.all(workers)
     }
   }
   void bulkWarm()
