@@ -127,9 +127,21 @@ if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions
     rootPkg.overrides = { ...(rootPkg.overrides ?? {}), effect: pinned };
     rootPkg.devDependencies = { ...(rootPkg.devDependencies ?? {}), effect: pinned };
     writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
-    // The copied upstream lock retains its split transitive resolution. Recreate
-    // it after pinning so Bun can apply the single-version graph to the build.
-    rmSync(join(outDir, "bun.lock"), { force: true });
+    const lockPath = join(outDir, "bun.lock");
+    const lock = readFileSync(lockPath, "utf8");
+    const aliases = /\s*"@standard-community\/standard-(?:json|openapi)\/effect": \["effect@4\.0\.0-beta\.74"[^\n]*\n/g;
+    const nestedSchemaAliases = /\s*"@standard-community\/standard-(?:json|openapi)\/effect\/@standard-schema\/spec": \[[^\n]*\n/g;
+    const deduped = lock
+      .replace('"@types/node": "catalog:",\n  },', '"@types/node": "catalog:",\n    "effect": "4.0.0-beta.83",\n  },')
+      .replace(aliases, "")
+      .replace(nestedSchemaAliases, "");
+    if (deduped.includes("effect@4.0.0-beta.74")) {
+      throw new Error("materialize could not remove the split effect resolution");
+    }
+    if (!deduped.includes('"effect": "4.0.0-beta.83"')) {
+      throw new Error("materialize could not pin the root effect resolution");
+    }
+    writeFileSync(lockPath, deduped);
     console.log(`[materialize] pinned single effect@${pinned} via overrides (dedupe)`);
   } else {
     console.warn("[materialize] WARNING: no catalog effect pin found — skipping effect dedupe");
