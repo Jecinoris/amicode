@@ -66,6 +66,7 @@ import { SettingsProvider, useSettings } from "@/context/settings"
 import { TabsProvider, tabHref, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
+import { amicodeGet } from "@/utils/amicode-fetch"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
 import { WslServersProvider } from "@/wsl/context"
@@ -852,93 +853,99 @@ function SessionLineagePrewarmer() {
       if (session.prefetch) {
         // #1299: the RENDER PAGE FIRST, the deep warm behind it. The
         // previous order (60 deep, immediately) meant a quick first switch
-        // to a cold tab JOINED the mid-flight deep prefetch — 8-12s holds
-        // (measured: the paint ring's 11,949ms / 8,034ms sessions). The
-        // 20-message page lands in one round trip and satisfies the
-        // timeline; the 60-deep pass continues behind it and fills history.
-        void session
-          .prefetch(tab.sessionId, 20)
-          .then(() => session.prefetch(tab.sessionId, 60))
-          .catch(() => {})
+        // #1306: the per-tab prefetch chain is GONE. The snapshot seeds
+        // every open tab's render page at boot; the SSE keeps live tabs
+        // current; the mirror persists depth; history deepens on scroll
+        // (loadOlder). The old 20-then-60 chain re-fired whenever a tab's
+        // page aged past 15s — background wire churn that queued behind
+        // nothing useful and made the harness's zero-fetch assertion
+        // timing-fragile. Foreground only now.
       }
     }
   })
-  // #1289 P2 (bulk mirror): warm the N most-recent sessions across the
-  // server — lineage + the first message page each — not just OPEN TABS.
-  // Over a fleet link, a tab click to any recently-touched session then
-  // renders from the local mirror with zero wire round-trips. One
-  // recency-ordered list page per pass (the server sorts); the
-  // lineage-peek + shouldPrefetch guards make repeat passes free.
-  const BULK_WARM_SESSIONS = 30
-  const BULK_WARM_MESSAGES = 20
-  const bulkWarm = async () => {
-    for (const conn of global.servers.list()) {
-      // #1290: same ctx fix — conn.sync is undefined on raw list entries.
-      const sync = global.ensureServerCtx(conn).sync
+  // #1306: SNAPSHOT boot — ONE request carries the recent fleet state:
+  // the capped session list + the top-30 render pages + the SSE cursor.
+  // Replaces the ENTIRE bulk warm (#1289): no list round-trip per pass, no
+  // lineage fan-out, no per-session prefetch chains, no 6-connection pool
+  // storms, no 20s-interval wire churn. SSE keeps live sessions current
+  // from the snapshot's cursor; the per-switch background sync reconciles
+  // depth; the frontdoor's 15s TTL + event invalidation keeps the blob
+  // fresh for the next boot.
+  const SNAPSHOT_TOP = 30
+  const snapshotBoot = async () => {
+    // The servers list restores asynchronously — under real latency the
+    // prewarmer can beat it. Retry (bounded) until at least one server
+    // context exists; the fetch itself also gets one retry on failure.
+    let lastErr = ""
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const conns = global.servers.list()
+      if (conns.length === 0) {
+        await new Promise((r) => setTimeout(r, 1500))
+        continue
+      }
+      let servedAny = false
+      let failed = false
+      for (const conn of conns) {
+      const ctx = global.ensureServerCtx(conn)
+      const sync = ctx.sync
       if (!sync?.session) {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
         continue
       }
-      let recent: Array<{ id: string }> = []
       try {
-        const ctx = global.ensureServerCtx(conn)
-        const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
-        // #1294c: keep the FULL session objects — the warm's list response
-        // already carries them, and seeding data.info here is what lets
-        // sync()'s cache check early-return on a switch. Without it, a
-        // warmed+cached session still fetched its info on every switch
-        // (wire RTT), and the outlet Suspense held the panel for it.
-        recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
-        ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
-          n: recent.length,
-          at: Date.now(),
+        const raw = (await amicodeGet(conn, `/snapshot?top=${SNAPSHOT_TOP}`)) as {
+          sessions?: Array<Record<string, unknown>>
+          messages?: Record<string, Array<Record<string, unknown>>>
+          trimmed?: string[]
+          lastEventID?: string
         }
-      } catch (e) {
-        console.warn("[prewarmer] bulk list failed:", e)
-        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
-        continue
-      }
-      // #1304: the warm runs as a BOUNDED QUEUE (3 concurrent), never a
-      // storm. The old loop voided all ~32 sessions' lineage+prefetch
-      // chains at once — saturating the browser's 6-connection pool to
-      // the hub, so a switch's foreground render fetch queued behind the
-      // whole pass: the constant ~8.2s paints (vs 1.4s when a switch
-      // happened to land BETWEEN passes). Background warming must never
-      // occupy the pool the foreground needs.
-      const WARM_CONCURRENCY = 3
-      let cursor = 0
-      const workers = Array.from({ length: WARM_CONCURRENCY }, async () => {
-        while (cursor < recent.length) {
-          const info = recent[cursor++]
+        const trimmed = new Set(raw.trimmed ?? [])
+        const infos = (raw.sessions ?? []).filter(
+          (info): info is Record<string, unknown> & { id: string } => typeof info?.id === "string",
+        )
+        for (const info of infos) {
           // #1294c: seed data.info from the list payload — zero wire cost.
-          // The v2 list objects carry location:{directory} with NO
-          // top-level directory/slug/path — normalizeSessionInfo maps
-          // them (every other consumer normalizes at the boundary; the
-          // raw object crashed the tab strip's render on the real hub).
+          // normalizeSessionInfo maps the wire shape at the boundary (raw
+          // objects crash the tab strip's render).
           try {
             sync.session.remember(normalizeSessionInfo(info))
           } catch {
             /* best-effort */
           }
+        }
+        for (const [sid, page] of Object.entries(raw.messages ?? {})) {
           try {
-            if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
-              await sync.session.lineage.resolve(info.id)
-            }
-            if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
-              await sync.session.prefetch(info.id, BULK_WARM_MESSAGES)
-            }
+            sync.session.seedFromSnapshot(sid, page as never, trimmed.has(sid))
           } catch {
             /* best-effort */
           }
         }
-      })
-      await Promise.all(workers)
+        if (raw.lastEventID) {
+          try {
+            sessionStorage.setItem("amicode.sse.lastEventID", raw.lastEventID)
+          } catch {
+            /* best-effort */
+          }
+        }
+        ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
+          n: infos.length,
+          at: Date.now(),
+        }
+        servedAny = true
+      } catch (e) {
+        failed = true
+        lastErr = String(e).slice(0, 90)
+        console.warn("[prewarmer] snapshot failed:", e)
+        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = lastErr
+      }
+      }
+      if (servedAny && !failed) return
+      await new Promise((r) => setTimeout(r, 1500))
     }
+    if (lastErr) (globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "gave-up:" + lastErr
   }
   installLongTaskObserver()
-  void bulkWarm()
-  const warmTimer = setInterval(() => void bulkWarm(), 20_000)
-  onCleanup(() => clearInterval(warmTimer))
+  void snapshotBoot()
   return null
 }
 

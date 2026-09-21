@@ -957,6 +957,48 @@ export function createServerSession(
     })
   }
 
+  /** #1306: seed a session's render page from the hub snapshot — ONE
+   *  request at boot carries the recent fleet state (list + pages). Applies
+   *  through the SAME normalizer as wire pages. Untrimmed pages get the
+   *  meta.limit mark so the switch path reads them as cached; trimmed pages
+   *  (tool outputs cut to their head so the snapshot stays ~300KB) apply
+   *  WITHOUT marks — the per-switch background sync re-pulls the full page
+   *  after first paint. Never overwrites a store that holds >= the page. */
+  const seedFromSnapshot = (sessionID: string, rawPage: Array<Record<string, unknown>>, trimmed: boolean) => {
+    // Wire shape (live hub captures + mock fixtures): [{info: {...}, parts: [...]}].
+    // Defensive: bare message objects (parts inline) map to the same record.
+    const page = rawPage.map((item) => {
+      const info = (item && typeof item === "object" && "info" in item && (item as { info?: unknown }).info)
+        ? (item as { info: Message }).info
+        : (item as unknown as Message)
+      const parts =
+        (item as { parts?: unknown } | undefined)?.parts && Array.isArray((item as { parts?: unknown }).parts)
+          ? ((item as { parts: Part[] }).parts as Part[])
+          : ((info as unknown as { parts?: Part[] }).parts ?? [])
+      return { info, parts }
+    })
+    const storeCount = data.message[sessionID]?.length ?? 0
+    if (storeCount > 0 && storeCount >= page.length) return
+    const infos = page.map((item) => item.info).sort(compareMessages)
+    batch(() => {
+      if (infos.length) setData("message", sessionID, infos)
+      for (const item of page) {
+        if (item.parts.length) setData("part", item.info.id, item.parts.slice())
+      }
+      if (!trimmed && infos.length) {
+        setMeta("limit", sessionID, page.length)
+        setMeta("at", sessionID, Date.now())
+      }
+    })
+    ;(globalThis as { __snapshotSeeded?: string[] }).__snapshotSeeded = (
+      (globalThis as { __snapshotSeeded?: string[] }).__snapshotSeeded ?? []
+    ).concat([sessionID.slice(-14)])
+    // #1306: seeded pages persist to the mirror exactly like loaded ones —
+    // a reload then hydrates from disk even if its snapshot re-fetch loses
+    // the race against the route restore (the 800ms-latency reload flow).
+    if (infos.length) persistMirror(sessionID)
+  }
+
   /** #1297: satisfy the render from the mirror WITHOUT joining any
    *  in-flight task (a mid-deep-warm prefetch can hold a runInflight slot
    *  for many seconds; a switch that joins it shows the frozen pane for
@@ -1008,6 +1050,11 @@ export function createServerSession(
     touch(sessionID)
     await inflight.get(sessionID)
     const count = data.message[sessionID]?.length ?? 0
+    // #1306: fresh (recently loaded OR snapshot-seeded) pages are never
+    // re-pulled — depth fills on scroll or staleness. (The tab-prefetch
+    // block called this with no shouldPrefetch guard and re-fetched every
+    // open tab's page at boot even when the snapshot had just seeded it.)
+    if (count > 0 && Date.now() - (meta.at[sessionID] ?? 0) <= 15_000) return
     if (
       // #1294: an empty list is never "fresh enough" — the SSE reducers
       // can empty a warmed session; the next warm pass must re-pull it.
@@ -1475,6 +1522,7 @@ export function createServerSession(
     get: (sessionID: string) => data.info[sessionID],
     peek: (sessionID: string) => data.info[sessionID],
     remember,
+    seedFromSnapshot,
     resolve,
     lineage: {
       peek: peekLineage,
@@ -1487,7 +1535,11 @@ export function createServerSession(
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
       if (data.message[sessionID] === undefined) return true
-      if (Date.now() - (meta.at[sessionID] ?? 0) > 15_000) return true
+      // #1306: FRESH means recently loaded OR snapshot-seeded — the render
+      // page is sufficient; depth fills on scroll (loadOlder) or staleness.
+      // (Seeded pages were immediately re-pulled by the tab prefetch — a
+      // wasted wire fetch per open tab at boot.)
+      if (Date.now() - (meta.at[sessionID] ?? 0) <= 15_000) return false
       if (meta.complete[sessionID]) return false
       return (meta.limit[sessionID] ?? 0) <= limit
     },
