@@ -11,6 +11,25 @@
 /** Default heartbeat interval: 30 seconds. */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
+/** Resolve this machine's Tailscale MagicDNS name from `tailscale status
+ *  --self --json`. Returns the DNS name (without trailing dot) or undefined
+ *  when tailscale CLI is unavailable or the response lacks a DNSName. Pure
+ *  string transform over an injectable command runner. */
+export function resolveTailscaleDnsName(
+  runCommand: (cmd: string, args: string[]) => string,
+): string | undefined {
+  try {
+    const raw = runCommand("tailscale", ["status", "--self", "--json"]);
+    const self = JSON.parse(raw)?.Self;
+    const dns: string | undefined = self?.DNSName;
+    if (!dns || dns.trim() === "") return undefined;
+    // Tailscale appends a trailing dot — strip it for URL construction.
+    return dns.replace(/\.$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
 /** DI seams for testability — every impure operation is injectable. */
 export interface FleetHeartbeatDeps {
   /** Resolve this machine's identity for the roster row. Returns null when
@@ -23,6 +42,9 @@ export interface FleetHeartbeatDeps {
     device_type?: string;
     sshAlias: string;
     transport: string;
+    /** The URL peers should use to reach this machine's fleet service directly
+     *  (e.g. MagicDNS HTTPS origin for tailscale). Absent for SSH peers. */
+    peer_origin?: string;
   } | null;
   /** The fetch implementation (injectable for tests). */
   fetchImpl: typeof fetch;
@@ -102,6 +124,7 @@ export class FleetHeartbeat {
         transport: identity.transport,
         health: "reachable" as const,
         last_report: new Date(now).toISOString(),
+        ...(identity.peer_origin !== undefined ? { peer_origin: identity.peer_origin } : {}),
       };
       const rowJson = JSON.stringify(row);
       // Local POST — updates this machine's own roster.

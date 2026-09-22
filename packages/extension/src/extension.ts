@@ -8,7 +8,7 @@ import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
-import { FleetHeartbeat } from "./fleet_heartbeat";
+import { FleetHeartbeat, resolveTailscaleDnsName } from "./fleet_heartbeat";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -586,6 +586,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         if (!local || local.serveStance === "standalone") return null;
         const topology = readFleetTopology();
         const sshAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? local.machineId;
+        // Read the configured transport (defaults to "ssh" when unset).
+        const cfg = vscode.workspace.getConfiguration("amicode");
+        const transport = cfg.get<string>("fleetTransport", "").trim() || "ssh";
+        // For tailscale transport, resolve this machine's MagicDNS peer_origin
+        // so peers can push heartbeats via HTTPS instead of SSH.
+        let peer_origin: string | undefined;
+        if (transport === "tailscale") {
+          const { execFileSync } = require("node:child_process");
+          const dnsName = resolveTailscaleDnsName(
+            (cmd: string, args: string[]) => execFileSync(cmd, args, { encoding: "utf8", timeout: 5_000 }),
+          );
+          if (dnsName) {
+            const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
+            const { tailscaleServeMapping } = require("./amicode_service/fleet_transport");
+            const mapping = tailscaleServeMapping({ magicDnsName: dnsName, port });
+            peer_origin = mapping.magicDnsOrigin;
+          }
+        }
         return {
           machine_id: local.machineId,
           name: local.name,
@@ -593,7 +611,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           capabilities: local.serveStance === "server" ? ["serving"] : [],
           device_type: local.deviceType,
           sshAlias,
-          transport: "ssh",
+          transport,
+          ...(peer_origin !== undefined ? { peer_origin } : {}),
         };
       } catch {
         return null;

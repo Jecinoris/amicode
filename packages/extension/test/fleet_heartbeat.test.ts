@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FleetHeartbeat, HEARTBEAT_INTERVAL_MS } from "../src/fleet_heartbeat";
+import { FleetHeartbeat, HEARTBEAT_INTERVAL_MS, resolveTailscaleDnsName } from "../src/fleet_heartbeat";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   const NOW = Date.parse("2026-09-20T12:00:00.000Z");
@@ -100,5 +100,87 @@ describe("FleetHeartbeat (#1375)", () => {
     hb.start();
     hb.dispose();
     expect(deps.timer.clearInterval).toHaveBeenCalledWith(42);
+  });
+
+  it("tick includes peer_origin in the roster row when identity provides one", async () => {
+    const deps = makeDeps({
+      resolveIdentity: vi.fn(() => ({
+        machine_id: "mac-studio-01",
+        name: "Mac Studio",
+        server_mode: "server",
+        capabilities: ["serving"],
+        device_type: "desktop",
+        sshAlias: "jjs-mac-studio",
+        transport: "tailscale",
+        peer_origin: "https://jjs-mac-studio.tail570504.ts.net",
+      })),
+    });
+    const hb = new FleetHeartbeat(deps as any);
+    await hb.tick();
+    const body = JSON.parse(deps.fetchImpl.mock.calls[0][1].body);
+    expect(body.transport).toBe("tailscale");
+    expect(body.peer_origin).toBe("https://jjs-mac-studio.tail570504.ts.net");
+  });
+
+  it("tick omits peer_origin from the roster row when identity does not provide one", async () => {
+    const deps = makeDeps(); // default identity has no peer_origin
+    const hb = new FleetHeartbeat(deps as any);
+    await hb.tick();
+    const body = JSON.parse(deps.fetchImpl.mock.calls[0][1].body);
+    expect(body.transport).toBe("ssh");
+    expect(body.peer_origin).toBeUndefined();
+    expect("peer_origin" in body).toBe(false);
+  });
+
+  it("tick calls pushToPeers with the serialized row when wired", async () => {
+    const pushToPeers = vi.fn(async () => {});
+    const deps = makeDeps({ pushToPeers });
+    const hb = new FleetHeartbeat(deps as any);
+    await hb.tick();
+    expect(pushToPeers).toHaveBeenCalledTimes(1);
+    const rowJson = pushToPeers.mock.calls[0][0];
+    const row = JSON.parse(rowJson);
+    expect(row.machine_id).toBe("mac-studio-01");
+    expect(row.health).toBe("reachable");
+  });
+
+  it("tick swallows pushToPeers errors independently of the local POST", async () => {
+    const pushToPeers = vi.fn(async () => { throw new Error("peer unreachable"); });
+    const deps = makeDeps({ pushToPeers });
+    const hb = new FleetHeartbeat(deps as any);
+    await expect(hb.tick()).resolves.toBeUndefined();
+    // Local POST still happened
+    expect(deps.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("resolveTailscaleDnsName", () => {
+  it("extracts the MagicDNS name from tailscale status --self --json", () => {
+    const mockOutput = JSON.stringify({
+      Self: { DNSName: "jjs-mac-studio.tail570504.ts.net.", TailscaleIPs: ["100.77.141.50"] },
+    });
+    const dns = resolveTailscaleDnsName(() => mockOutput);
+    expect(dns).toBe("jjs-mac-studio.tail570504.ts.net");
+  });
+
+  it("strips the trailing dot from the DNS name", () => {
+    const mockOutput = JSON.stringify({ Self: { DNSName: "host.example.ts.net." } });
+    const dns = resolveTailscaleDnsName(() => mockOutput);
+    expect(dns).toBe("host.example.ts.net");
+  });
+
+  it("returns undefined when tailscale CLI is not available", () => {
+    const dns = resolveTailscaleDnsName(() => { throw new Error("command not found"); });
+    expect(dns).toBeUndefined();
+  });
+
+  it("returns undefined when Self.DNSName is missing", () => {
+    const dns = resolveTailscaleDnsName(() => JSON.stringify({ Self: {} }));
+    expect(dns).toBeUndefined();
+  });
+
+  it("returns undefined when output is not valid JSON", () => {
+    const dns = resolveTailscaleDnsName(() => "not json");
+    expect(dns).toBeUndefined();
   });
 });
