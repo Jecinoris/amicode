@@ -8,7 +8,7 @@ import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
-import { FleetHeartbeat, resolveTailscaleDnsName } from "./fleet_heartbeat";
+import { FleetHeartbeat, resolveTailscaleDnsName, pushRowToPeer } from "./fleet_heartbeat";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -638,33 +638,40 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
     now: () => Date.now(),
     // Peer roster sync: push this machine's heartbeat row to every known
-    // peer's hub service via SSH. Each peer listens on loopback, so we
-    // exec `ssh <alias> curl ...` to POST the row. Failures are swallowed
-    // independently — an unreachable peer never blocks the local update.
+    // peer's hub service, dispatching on each peer's declared transport.
+    // Tailscale/direct peers are reached via HTTPS to their peer_origin;
+    // SSH peers are reached via ssh <alias> curl to loopback. Failures are
+    // swallowed independently — an unreachable peer never blocks others.
     pushToPeers: async (rowJson: string) => {
       try {
         const rosterFile = (await import("./amicode_service/roster")).rosterFilePath();
         const raw = fs.readFileSync(rosterFile, "utf8");
         const doc = JSON.parse(raw);
-        const rows: Array<{ machine_id: string; sshAlias?: string }> = doc?.rows ?? [];
+        const rows: Array<{ machine_id: string; sshAlias?: string; transport?: string; peer_origin?: string }> = doc?.rows ?? [];
         const topology = readFleetTopology();
         const localAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? "";
         const localId = (topology.kind === "ok" ? topology.canonical?.host : undefined) ?? "";
         const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
         const { execFile } = await import("node:child_process");
         for (const row of rows) {
-          const alias = row.sshAlias;
-          if (!alias) continue;
-          // Skip self — don't SSH to ourselves.
-          if (alias === localAlias || row.machine_id === localId) continue;
-          // Fire-and-forget SSH to the peer's hub service.
-          const escaped = rowJson.replace(/'/g, "'\\''");
-          execFile("ssh", [
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
-            alias,
-            `curl -sf -X POST http://127.0.0.1:${port}/amicode/roster -H 'Content-Type: application/json' -d '${escaped}'`,
-          ], { timeout: 10_000 }, () => { /* swallow */ });
+          if (!row.sshAlias && !row.peer_origin) continue;
+          // Skip self — don't push to ourselves.
+          if (row.sshAlias === localAlias || row.machine_id === localId) continue;
+          // Fire-and-forget, transport-aware push.
+          pushRowToPeer({
+            rowJson,
+            peer: row,
+            localPort: port,
+            fetchImpl: fetch as any,
+            execSsh: (alias, remoteCmd) => {
+              execFile("ssh", [
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=5",
+                alias,
+                remoteCmd,
+              ], { timeout: 10_000 }, () => { /* swallow */ });
+            },
+          }).catch(() => { /* swallow */ });
         }
       } catch {
         // swallow — peer sync is best-effort

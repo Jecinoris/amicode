@@ -147,3 +147,49 @@ export class FleetHeartbeat {
     }
   }
 }
+
+// ── transport-aware peer push ───────────────────────────────────────────────
+
+/** The minimal peer shape pushRowToPeer reads from a roster row. */
+export interface PushPeerTarget {
+  machine_id: string;
+  sshAlias?: string;
+  transport?: string;
+  peer_origin?: string;
+}
+
+/** Push a serialized roster row to a single peer, dispatching on the peer's
+ *  declared transport. When the peer has a `peer_origin` URL (tailscale or
+ *  direct), POST via HTTPS directly; otherwise fall back to SSH + curl to
+ *  the peer's loopback. Fire-and-forget: errors are swallowed silently.
+ *
+ *  Injectable deps for testability: `fetchImpl` for HTTPS, `execSsh` for
+ *  the SSH + curl path (receives alias and the remote curl command string). */
+export async function pushRowToPeer(opts: {
+  rowJson: string;
+  peer: PushPeerTarget;
+  localPort: number;
+  fetchImpl: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean }>;
+  execSsh: (alias: string, remoteCmd: string) => void;
+}): Promise<void> {
+  try {
+    const { rowJson, peer, localPort, fetchImpl, execSsh } = opts;
+    if (peer.peer_origin) {
+      // HTTPS path — tailscale (MagicDNS origin) or direct (operator URL).
+      await fetchImpl(`${peer.peer_origin}/amicode/roster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: rowJson,
+      });
+    } else {
+      // SSH path — the legacy default: ssh <alias> curl ... 127.0.0.1.
+      const alias = peer.sshAlias;
+      if (!alias) return;
+      const escaped = rowJson.replace(/'/g, "'\\''");
+      const remoteCmd = `curl -sf -X POST http://127.0.0.1:${localPort}/amicode/roster -H 'Content-Type: application/json' -d '${escaped}'`;
+      execSsh(alias, remoteCmd);
+    }
+  } catch {
+    // swallow — peer sync is best-effort
+  }
+}

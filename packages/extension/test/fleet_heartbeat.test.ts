@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FleetHeartbeat, HEARTBEAT_INTERVAL_MS, resolveTailscaleDnsName } from "../src/fleet_heartbeat";
+import { FleetHeartbeat, HEARTBEAT_INTERVAL_MS, resolveTailscaleDnsName, pushRowToPeer } from "../src/fleet_heartbeat";
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   const NOW = Date.parse("2026-09-20T12:00:00.000Z");
@@ -182,5 +182,84 @@ describe("resolveTailscaleDnsName", () => {
   it("returns undefined when output is not valid JSON", () => {
     const dns = resolveTailscaleDnsName(() => "not json");
     expect(dns).toBeUndefined();
+  });
+});
+
+describe("pushRowToPeer — transport-aware heartbeat push", () => {
+  it("uses fetch for a peer with peer_origin (tailscale transport)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const execSsh = vi.fn();
+    await pushRowToPeer({
+      rowJson: '{"machine_id":"mbp"}',
+      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale", peer_origin: "https://jjs-mac-studio.tail570504.ts.net" },
+      localPort: 4096,
+      fetchImpl,
+      execSsh,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, opts] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://jjs-mac-studio.tail570504.ts.net/amicode/roster");
+    expect(opts.method).toBe("POST");
+    expect(opts.body).toBe('{"machine_id":"mbp"}');
+    expect(execSsh).not.toHaveBeenCalled();
+  });
+
+  it("uses SSH for a peer without peer_origin (ssh transport)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const execSsh = vi.fn();
+    await pushRowToPeer({
+      rowJson: '{"machine_id":"mbp"}',
+      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "ssh" },
+      localPort: 4096,
+      fetchImpl,
+      execSsh,
+    });
+    expect(execSsh).toHaveBeenCalledTimes(1);
+    expect(execSsh.mock.calls[0][0]).toBe("jjs-mac-studio");
+    expect(execSsh.mock.calls[0][1]).toContain("127.0.0.1:4096");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("uses SSH for a peer with transport=tailscale but no peer_origin (fallback)", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const execSsh = vi.fn();
+    await pushRowToPeer({
+      rowJson: '{"machine_id":"mbp"}',
+      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale" },
+      localPort: 4096,
+      fetchImpl,
+      execSsh,
+    });
+    expect(execSsh).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("swallows fetch errors silently", async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error("network error"); });
+    const execSsh = vi.fn();
+    // Must not throw
+    await expect(pushRowToPeer({
+      rowJson: '{"machine_id":"mbp"}',
+      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale", peer_origin: "https://example.ts.net" },
+      localPort: 4096,
+      fetchImpl,
+      execSsh,
+    })).resolves.toBeUndefined();
+  });
+
+  it("uses fetch for a direct-transport peer with peer_origin", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true }));
+    const execSsh = vi.fn();
+    await pushRowToPeer({
+      rowJson: '{"machine_id":"mbp"}',
+      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "direct", peer_origin: "https://10.0.0.5:4096" },
+      localPort: 4096,
+      fetchImpl,
+      execSsh,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://10.0.0.5:4096/amicode/roster");
+    expect(execSsh).not.toHaveBeenCalled();
   });
 });
