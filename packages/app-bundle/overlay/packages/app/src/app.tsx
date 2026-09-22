@@ -1241,7 +1241,17 @@ export function AppInterface(props: {
                                   the frozen view through both classes —
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
-                              <ErrorBoundary fallback={() => <HoldSpy which="errboundary" />}>
+                              <ErrorBoundary
+                                fallback={(err, reset) => {
+                                  // #1312c: the outlet net was SILENT by design — a caught
+                                  // error became a frozen hold with NO log anywhere (not
+                                  // console, not window.onerror — solid swallows the
+                                  // throw internally). Log it: the entry boot-buffer
+                                  // captures + every snapshot ships it.
+                                  console.error("[outlet] boundary caught:", err)
+                                  return <HoldSpy which="errboundary" />
+                                }}
+                              >
                                 <Suspense fallback={() => <SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
