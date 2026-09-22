@@ -686,6 +686,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-12) ?? null,
           longtask: (globalThis as { __longtaskRing?: unknown }).__longtaskRing?.slice(-40) ?? null,
           gates: (globalThis as { __gateRing?: unknown }).__gateRing?.slice(-40) ?? null,
+          boot: (globalThis as { __bootErrors?: unknown }).__bootErrors?.length ? (globalThis as { __bootErrors?: unknown }).__bootErrors : null,
             clone: (globalThis as { __cloneRing?: unknown }).__cloneRing?.slice(-12) ?? null,
             hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
