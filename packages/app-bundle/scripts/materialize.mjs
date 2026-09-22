@@ -132,6 +132,22 @@ if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions
   }
 }
 
+// ── replace an expired upstream preview package with its published release ───
+// The canonical root catalog pointed at a short-lived pkg.pr.new build that now
+// returns 404. Keep the source pin intact and replace only this unavailable
+// catalog value in the materialized build tree. 1.3.2 matches the existing
+// vite-plugin-solid@2.11.10 catalog pin.
+{
+  const rootPkgPath = join(outDir, "package.json");
+  const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
+  const catalog = rootPkg.workspaces?.catalog;
+  if (typeof catalog?.["@solidjs/start"] === "string" && catalog["@solidjs/start"].startsWith("https://pkg.pr.new/")) {
+    catalog["@solidjs/start"] = "1.3.2";
+    writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
+    console.log("[materialize] replaced expired @solidjs/start preview with 1.3.2");
+  }
+}
+
 // ── verify against the manifest (hashes are the contract) ───────────────────
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 let bad = 0;
