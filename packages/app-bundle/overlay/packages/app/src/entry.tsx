@@ -17,6 +17,24 @@ import { render } from "solid-js/web"
       if (g.__bootErrors && g.__bootErrors.length < 30) g.__bootErrors.push(`${kind} ${text}`.slice(0, 600))
     } catch {}
   }
+  // #1313: FETCH SNIFFER — any text/html response to a non-document fetch
+  // is a SPA-fallback answer to a data call; downstream JSON.parse throws
+  // "Unexpected token '<'" through boundaries with no stack. Name the fetch
+  // AND ITS CALLER at the source.
+  {
+    const origFetch = window.fetch.bind(window)
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) =>
+      origFetch(input, init).then((res: Response) => {
+        const ct = res.headers.get("content-type") || ""
+        if (ct.includes("text/html")) {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url
+          if (!/\.(html|ico|svg|png|webmanifest)/.test(url)) {
+            push("H", `fetch(${url.slice(0, 100)}) got text/html — caller: ${(new Error().stack ?? "").split("\n").slice(2, 5).join(" < ")}`)
+          }
+        }
+        return res
+      })
+  }
   window.addEventListener("error", (e) => push("E", `${e.message}
 ${(e.error && e.error.stack) || e.filename || ""}`))
   window.addEventListener("unhandledrejection", (e) => push("R", String(e.reason).slice(0, 300)))
