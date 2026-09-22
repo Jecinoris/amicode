@@ -985,9 +985,17 @@ export function createServerSession(
       for (const item of page) {
         if (item.parts.length) setData("part", item.info.id, item.parts.slice())
       }
-      if (!trimmed && infos.length) {
-        setMeta("limit", sessionID, page.length)
+      // #1311: TRIMMED pages are REAL, renderable messages — mark them
+      // LOADED so the timeline gate opens on the seed. The live wedge: the
+      // snapshot trims exactly the ACTIVE sessions (huge tool outputs),
+      // the unmarked seed left loaded() false, and the timeline gate held
+      // the frozen clone for the FULL wire refetch (~8-9s live; the rig
+      // never trims, so it never saw this). meta.limit stays UNSET for
+      // trimmed pages — the background sync still refetches the full
+      // text and reconciles after first paint.
+      if (infos.length) {
         setMeta("at", sessionID, Date.now())
+        if (!trimmed) setMeta("limit", sessionID, page.length)
       }
     })
     ;(globalThis as { __snapshotSeeded?: string[] }).__snapshotSeeded = (
