@@ -270,7 +270,7 @@ def run(debug_port, app_port, latency_ms):
         # mirror must render from disk in well under that.
         t_main = time.time() - t0
         while time.time() < deadline:
-            if d.ev(r"""document.body.innerText.includes('assistant reply 1')"""):
+            if d.ev(r"""document.body.innerText.includes('Alpha assistant reply 1')"""):
                 reload_ms = time.time() - t0
                 break
             time.sleep(0.1)
@@ -342,13 +342,13 @@ def run(debug_port, app_port, latency_ms):
         cur = d.ev(r"""location.pathname.match(/session\/([^/?]+)/)?.[1]""")
         if not cur:
             raise AssertionError(f"not on a session route for the removal test (url={d.ev('location.pathname')})")
-        before = d.ev("document.body.innerText.includes('assistant reply 1')")
+        before = d.ev("document.body.innerText.includes('Alpha assistant reply 1')")
         msgs = json.load(_ur.urlopen(f"http://127.0.0.1:{app_port}/session/{cur}/message", timeout=10))
         for m in msgs:
             _post("/__test/emit", {"type": "message.removed", "directory": "/home/aaron/test-project",
                                    "properties": {"sessionID": cur, "messageID": m["info"]["id"]}})
         time.sleep(3)
-        emptied = d.ev("document.body.innerText.includes('assistant reply 1')") is False
+        emptied = d.ev("document.body.innerText.includes('Alpha assistant reply 1')") is False
         # switch away and back through the flyout, then wait past a warm
         # pass: the removed messages must NOT come back.
         d.flyout_open()
@@ -357,7 +357,7 @@ def run(debug_port, app_port, latency_ms):
         d.flyout_open()
         d.flyout_click("Alpha test session")
         time.sleep(12)
-        stayed_removed = d.ev("document.body.innerText.includes('assistant reply 1')") is False
+        stayed_removed = d.ev("document.body.innerText.includes('Alpha assistant reply 1')") is False
         removal_ok = emptied and stayed_removed
         print(f"  removal: session={cur[-16:]} before={before} emptied={emptied} stayed_removed={stayed_removed} -> {'OK' if removal_ok else 'FAIL'}")
         if before is False:

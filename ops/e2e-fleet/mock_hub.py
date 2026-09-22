@@ -194,6 +194,9 @@ class Handler(BaseHTTPRequestHandler):
             Events.emit_v1(payload, payload_in.get("directory"))
             self._json({"ok": True, "id": payload["id"]})
             return
+        if self.path.split("?")[0] == "/__test/fan":
+            self._json({"members": len(Events.members), "last_event_id": Events._last_id if hasattr(Events, "_last_id") else None})
+            return
         if self.path.split("?")[0] == "/__test/kill_sse":
             n = len(Events.members)
             Events.kill_all()
