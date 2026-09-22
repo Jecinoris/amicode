@@ -15,6 +15,12 @@ export async function amicodeGet(conn: ServerConnection.Any | undefined, route: 
     })}`
   const res = await fetch(new URL(route, conn.http.url), { headers })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // #1313: unknown paths can reach a SPA fallback (the engine serves HTML
+  // with 200 for routes it doesn't know) — parsing that threw "Unexpected
+  // token '<'" through error boundaries. A non-JSON content-type is a
+  // wrong-origin/wrong-route answer: a clean error callers can catch.
+  const ct = res.headers.get("content-type") || ""
+  if (!ct.includes("json")) throw new Error(`non-JSON response for ${route} (${ct || "no content-type"})`)
   return (await res.json()) as unknown
 }
 
@@ -40,5 +46,7 @@ export async function amicodePost(
     ...(jsonBody !== undefined ? { body: JSON.stringify(jsonBody) } : {}),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const ct2 = res.headers.get("content-type") || ""
+  if (!ct2.includes("json")) throw new Error(`non-JSON response for ${route} (${ct2 || "no content-type"})`)
   return (await res.json()) as unknown
 }
