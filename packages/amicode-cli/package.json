@@ -1,0 +1,25 @@
+{
+  "name": "@amicode/amicode-cli",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/cli.ts",
+  "types": "./src/cli.ts",
+  "bin": {
+    "amicode": "./launcher/amicode"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests --exclude '**/slow/**'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

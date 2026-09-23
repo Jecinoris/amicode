@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Thin launcher for `amicode`. Round 1 execs the esbuild bundle; the install
+# round copies that same bundle into the machine tree.
+set -euo pipefail
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "amicode: node >= 20 not found on PATH" >&2
+  exit 64
+fi
+BUNDLE="$DIR/../dist/amicode.js"
+if [ ! -f "$BUNDLE" ]; then
+  echo "amicode: bundle missing ($BUNDLE) — run 'pnpm --filter @amicode/amicode-cli build'" >&2
+  exit 64
+fi
+exec node "$BUNDLE" "$@"
