@@ -75,8 +75,8 @@ import {
   sessionWarmSchedulerKey,
   warmBulkSession,
   warmOpenSessionTab,
+  warmSessionServerBatches,
 } from "@/context/session-warm"
-import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
@@ -906,15 +906,15 @@ function SessionLineagePrewarmer() {
   // lineage-peek + shouldPrefetch guards make repeat passes free.
   const BULK_WARM_SESSIONS = 30
   const bulkWarm = async () => {
-    for (const conn of global.servers.list()) {
-      // #1290: same ctx fix — conn.sync is undefined on raw list entries.
-      const sync = global.ensureServerCtx(conn).sync
-      if (!sync?.session) {
-        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
-        continue
-      }
-      let recent: Array<SessionV2Info> = []
-      try {
+    await warmSessionServerBatches({
+      servers: global.servers.list(),
+      list: async (conn) => {
+        const sync = global.ensureServerCtx(conn).sync
+        if (!sync?.session) {
+          ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
+          return []
+        }
+        try {
         const ctx = global.ensureServerCtx(conn)
         const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
         // #1294c: keep the FULL session objects — the warm's list response
@@ -922,35 +922,45 @@ function SessionLineagePrewarmer() {
         // sync()'s cache check early-return on a switch. Without it, a
         // warmed+cached session still fetched its info on every switch
         // (wire RTT), and the outlet Suspense held the panel for it.
-        recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
+        const recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
         ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
           n: recent.length,
           at: Date.now(),
         }
+        return recent
       } catch (e) {
         console.warn("[prewarmer] bulk list failed:", e)
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
-        continue
+        throw e
       }
-      const origin = sessionWarmSchedulerKey(conn.http.url)
-      await warmScheduler.warm(
-        origin,
-        recent.map((info) => async () => {
-          // #1294c: seed data.info from the list payload — zero wire cost.
-          // The v2 list objects carry location:{directory} with NO
-          // top-level directory/slug/path — normalizeSessionInfo maps them
-          // (every other consumer normalizes at the boundary; the raw
-          // object crashed the tab strip's render on the real hub).
-          await warmBulkSession({
-            remember: () => sync.session.remember(normalizeSessionInfo(info as SessionInfo)),
-            hasLineage: () => !sync.session.lineage || !!sync.session.lineage.peek(info.id),
-            resolveLineage: () => sync.session.lineage?.resolve(info.id) ?? Promise.resolve(),
-            shouldPrefetch: () => !!sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES),
-            prefetch: () => sync.session.prefetch?.(info.id, BULK_WARM_MESSAGES) ?? Promise.resolve(),
-          })
-        }),
-      )
-    }
+      },
+      normalize: (info) => normalizeSessionInfo(info as SessionInfo),
+      remember: (conn, info) => global.ensureServerCtx(conn).sync!.session!.remember(info),
+      warm: async (conn, recent) => {
+        const sync = global.ensureServerCtx(conn).sync
+        if (!sync?.session) return
+        await warmScheduler.warm(
+          sessionWarmSchedulerKey(conn.http.url),
+          recent.map((info) => ({
+          id: info.id,
+          chain: async () => {
+            // #1294c: seed data.info from the list payload — zero wire cost.
+            // The v2 list objects carry location:{directory} with NO
+            // top-level directory/slug/path — normalizeSessionInfo maps them
+            // (every other consumer normalizes at the boundary; the raw
+            // object crashed the tab strip's render on the real hub).
+            await warmBulkSession({
+              remember: () => {},
+              hasLineage: () => !sync.session.lineage || !!sync.session.lineage.peek(info.id),
+              resolveLineage: () => sync.session.lineage?.resolve(info.id) ?? Promise.resolve(),
+              shouldPrefetch: () => !!sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES),
+              prefetch: () => sync.session.prefetch?.(info.id, BULK_WARM_MESSAGES) ?? Promise.resolve(),
+            })
+          },
+          })),
+        )
+      },
+    })
   }
   void bulkWarm()
   const warmTimer = setInterval(() => void bulkWarm(), 20_000)
