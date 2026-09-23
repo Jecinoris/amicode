@@ -13,7 +13,7 @@ if ! command -v node >/dev/null 2>&1; then
   echo "amicode: node >= 20 not found on PATH" >&2
   exit 64
 fi
-BUNDLE="$DIR/../dist/amicode.js"
+BUNDLE="$DIR/../dist/amicode.cjs"
 if [ ! -f "$BUNDLE" ]; then
   echo "amicode: bundle missing ($BUNDLE) — run 'pnpm --filter @amicode/amicode-cli build'" >&2
   exit 64

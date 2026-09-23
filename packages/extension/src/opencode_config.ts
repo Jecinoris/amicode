@@ -468,6 +468,11 @@ export function buildOpencodeConfigContent(
    *  plugin (experimental.chat.system.transform hook) without touching the
    *  single-export amicode_tools pack. */
   extraPluginPaths: string[] = [],
+  /** Absolute path of the amicode MCP bundle. Default is the extension's
+   *  bin/dist/mcp-amico.mjs (src/ and dist/ both sit one level above bin/).
+   *  The standalone CLI passes its asset-root copy so a bundle whose
+   *  __dirname is not the extension tree still spawns the right file. */
+  mcpDistPath: string = DEFAULT_MCP_DIST_PATH,
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -508,7 +513,7 @@ export function buildOpencodeConfigContent(
     mcp: {
       amicode: {
         type: "local",
-        command: ["node", DEFAULT_MCP_DIST_PATH],
+        command: ["node", mcpDistPath],
         enabled: true,
         environment: {
           AMICODE_PROBLEMS_DIR: problemsRoot(),

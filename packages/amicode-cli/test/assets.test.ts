@@ -84,25 +84,25 @@ describe("checkAssets", () => {
 });
 
 describe("amicode doctor", () => {
-  it("prints the report and exits 0 for a complete tree", () => {
+  it("prints the report and exits 0 for a complete tree", async () => {
     const asset = fixture();
-    const result = run(["doctor"], { ...process.env, AMICODE_ASSET_ROOT: asset });
+    const result = await run(["doctor"], { ...process.env, AMICODE_ASSET_ROOT: asset });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("pass  opencode-plugin/amicode_context.ts");
     expect(result.stderr).toBe("");
   });
 
-  it("exits 1 when an asset is missing", () => {
+  it("exits 1 when an asset is missing", async () => {
     const asset = fixture();
-    const result = run(["doctor"], { ...process.env, AMICODE_ASSET_ROOT: join(asset, "missing") });
+    const result = await run(["doctor"], { ...process.env, AMICODE_ASSET_ROOT: join(asset, "missing") });
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("fail  AGENTS.md");
   });
 
-  it("exits 64 with usage when there is no command", () => {
-    const result = run([]);
+  it("exits 64 with usage when there is no command", async () => {
+    const result = await run([]);
     expect(result.code).toBe(64);
-    expect(result.stderr).toBe("usage: amicode doctor\n");
+    expect(result.stderr).toBe("usage: amicode doctor\n       amicode config\n");
     expect(result.stdout).toBe("");
   });
 });

@@ -87,6 +87,27 @@ describe("buildOpencodeConfigContent", () => {
     // threaded through the MCP environment, pinned explicitly (never ambient).
     expect(mcp.environment.AMICODE_PROBLEMS_DIR).toBe(join(homedir(), ".amico", "problems"));
   });
+  it("uses an explicit MCP bundle path when the caller supplies one", () => {
+    const mcpPath = "/opt/amicode/bin/dist/mcp-amico.mjs";
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent(
+        "/abs/AGENTS.md",
+        TPL,
+        "/home/u/.amico/runs/default",
+        undefined,
+        undefined,
+        [],
+        "",
+        "",
+        [],
+        undefined,
+        false,
+        [],
+        mcpPath,
+      ),
+    );
+    expect(cfg.mcp.amicode.command).toEqual(["node", mcpPath]);
+  });
   it("registers skills.paths only when a stage dir is given (opencode-native skills)", () => {
     const without = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(without.skills).toBeUndefined(); // no stage dir → no skills key at all

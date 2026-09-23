@@ -16,6 +16,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'"
   },
+  "dependencies": {
+    "@amicode/schema": "workspace:*",
+    "smol-toml": "^1.8.0",
+    "yaml": "^2.9.1"
+  },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "esbuild": "^0.28.1",

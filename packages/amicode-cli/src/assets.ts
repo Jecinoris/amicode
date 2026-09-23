@@ -22,9 +22,12 @@ export interface AssetReport {
   checks: AssetCheck[];
 }
 
-/** Package directory of amicode-cli, from this module's own URL. */
-export function packageDir(moduleUrl: string = import.meta.url): string {
-  return join(dirname(fileURLToPath(moduleUrl)), "..");
+/** Package directory of amicode-cli. The bundled launcher is dist/amicode.cjs,
+ *  one level below the package. Tests load this file from src/, where
+ *  import.meta.url is the real module URL. */
+export function packageDir(argv1: string | undefined = process.argv[1]): string {
+  if (argv1 && argv1.endsWith(join("dist", "amicode.cjs"))) return join(dirname(argv1), "..");
+  return join(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
 /** Dev default is the sibling extension package. A non-empty AMICODE_ASSET_ROOT
