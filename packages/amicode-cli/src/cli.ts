@@ -1,10 +1,10 @@
-// `amicode` — doctor (round 1) and config (round 2). Later rounds attach the
-// process environment and the TUI to this same entry. No vscode import.
+// `amicode` — doctor, config, and env. Later rounds attach the TUI to this
+// same entry. No vscode import.
 import { homedir } from "node:os";
 import { checkAssets, formatReport, packageDir, reportOk, resolveAssetRoot } from "./assets.js";
-import { CliSettingsError, cliSettingsPath, readCliSettings } from "./settings.js";
+import { CliSettingsError, cliSettingsPath, readCliSettings, type CliSettings } from "./settings.js";
 
-const USAGE = "usage: amicode doctor\n       amicode config\n";
+const USAGE = "usage: amicode doctor\n       amicode config\n       amicode env\n";
 
 export async function run(
   argv: string[],
@@ -37,7 +37,38 @@ export async function run(
       throw e;
     }
   }
+  if (command === "env") {
+    try {
+      const home = env.HOME?.trim() || homedir();
+      const settings = readCliSettings(cliSettingsPath(home));
+      const { listing } = await describeSpawnEnv({
+        assetRoot: resolveAssetRoot(env, packageDir()),
+        cwd,
+        home,
+        settings,
+        env,
+      });
+      return { code: 0, stdout: listing, stderr: "" };
+    } catch (e) {
+      if (e instanceof CliSettingsError) return { code: 64, stdout: "", stderr: `${e.message}\n` };
+      throw e;
+    }
+  }
   return { code: 64, stdout: "", stderr: `amicode: unknown command ${JSON.stringify(command)}\n${USAGE}` };
+}
+
+/** The spawn env plus the key-only listing `amicode env` prints. */
+export async function describeSpawnEnv(opts: {
+  assetRoot: string;
+  cwd: string;
+  home?: string;
+  settings?: CliSettings;
+  env?: NodeJS.ProcessEnv;
+  password?: string;
+}): Promise<{ env: Record<string, string>; listing: string }> {
+  const { buildCliSpawnEnv, formatEnvKeys } = await import("./spawn.js");
+  const spawnEnv = buildCliSpawnEnv(opts);
+  return { env: spawnEnv, listing: formatEnvKeys(spawnEnv) };
 }
 
 function isMain(): boolean {

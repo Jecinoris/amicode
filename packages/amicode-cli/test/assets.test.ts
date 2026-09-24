@@ -102,7 +102,7 @@ describe("amicode doctor", () => {
   it("exits 64 with usage when there is no command", async () => {
     const result = await run([]);
     expect(result.code).toBe(64);
-    expect(result.stderr).toBe("usage: amicode doctor\n       amicode config\n");
+    expect(result.stderr).toBe("usage: amicode doctor\n       amicode config\n       amicode env\n");
     expect(result.stdout).toBe("");
   });
 });
