@@ -23,10 +23,16 @@ export function binaryReady(path: string): boolean {
   }
 }
 
-/** Run the TUI in the foreground. Resolves with the child's exit code. */
-export function launchOpencode(opts: { binary: string; cwd: string; env: NodeJS.ProcessEnv }): Promise<number> {
+/** Run opencode in the foreground. `args` is empty for a new TUI and
+ *  `["attach", url]` when joining a server that is already up. */
+export function launchOpencode(opts: {
+  binary: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  args?: string[];
+}): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(opts.binary, [], {
+    const child = spawn(opts.binary, opts.args ?? [], {
       cwd: opts.cwd,
       env: opts.env,
       stdio: "inherit",

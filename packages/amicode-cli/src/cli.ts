@@ -77,10 +77,19 @@ async function launchTui(env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: n
       settings,
       env,
     });
+    const { chooseServer, configHash, conflictMessage, handshakeFile } = await import("./attach.js");
+    const choice = chooseServer(handshakeFile(home), configHash(spawnEnv.OPENCODE_CONFIG_CONTENT));
+    if (choice.action === "conflict") {
+      return { code: 1, stdout: "", stderr: conflictMessage(choice.port) };
+    }
     const code = await launchOpencode({
       binary,
       cwd,
-      env: { ...env, ...spawnEnv },
+      env:
+        choice.action === "attach"
+          ? { ...env, ...spawnEnv, OPENCODE_SERVER_PASSWORD: choice.password }
+          : { ...env, ...spawnEnv },
+      args: choice.action === "attach" ? ["attach", choice.url] : [],
     });
     return { code, stdout: "", stderr: "" };
   } catch (e) {
