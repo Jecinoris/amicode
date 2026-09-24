@@ -99,10 +99,12 @@ describe("amicode doctor", () => {
     expect(result.stdout).toContain("fail  AGENTS.md");
   });
 
-  it("exits 64 with usage when there is no command", async () => {
-    const result = await run([]);
-    expect(result.code).toBe(64);
-    expect(result.stderr).toBe("usage: amicode doctor\n       amicode config\n       amicode env\n");
+  it("refuses to start the TUI when the vendored binary is missing", async () => {
+    const asset = mkdtempSync(join(tmpdir(), "amicode-cli-nobin-"));
+    const result = await run([], { ...process.env, AMICODE_ASSET_ROOT: asset });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("vendored opencode missing");
+    expect(result.stderr).toContain("amicode doctor");
     expect(result.stdout).toBe("");
   });
 });

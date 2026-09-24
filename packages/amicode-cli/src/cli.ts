@@ -1,5 +1,4 @@
-// `amicode` — doctor, config, and env. Later rounds attach the TUI to this
-// same entry. No vscode import.
+// `amicode` — doctor, config, env, and the foreground TUI. No vscode import.
 import { homedir } from "node:os";
 import { checkAssets, formatReport, packageDir, reportOk, resolveAssetRoot } from "./assets.js";
 import { CliSettingsError, cliSettingsPath, readCliSettings, type CliSettings } from "./settings.js";
@@ -13,7 +12,7 @@ export async function run(
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   const command = argv[0];
   if (command === undefined) {
-    return { code: 64, stdout: "", stderr: USAGE };
+    return launchTui(env, cwd);
   }
   if (command === "doctor") {
     const root = resolveAssetRoot(env, packageDir());
@@ -55,6 +54,39 @@ export async function run(
     }
   }
   return { code: 64, stdout: "", stderr: `amicode: unknown command ${JSON.stringify(command)}\n${USAGE}` };
+}
+
+async function launchTui(env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  const assetRoot = resolveAssetRoot(env, packageDir());
+  const { binaryReady, launchOpencode, vendoredOpencodeBinary } = await import("./launch.js");
+  const binary = vendoredOpencodeBinary(assetRoot);
+  if (!binaryReady(binary)) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: `amicode: vendored opencode missing or not executable (${binary})\nrun amicode doctor\n`,
+    };
+  }
+  try {
+    const home = env.HOME?.trim() || homedir();
+    const settings = readCliSettings(cliSettingsPath(home));
+    const { env: spawnEnv } = await describeSpawnEnv({
+      assetRoot,
+      cwd,
+      home,
+      settings,
+      env,
+    });
+    const code = await launchOpencode({
+      binary,
+      cwd,
+      env: { ...env, ...spawnEnv },
+    });
+    return { code, stdout: "", stderr: "" };
+  } catch (e) {
+    if (e instanceof CliSettingsError) return { code: 64, stdout: "", stderr: `${e.message}\n` };
+    throw e;
+  }
 }
 
 /** The spawn env plus the key-only listing `amicode env` prints. */

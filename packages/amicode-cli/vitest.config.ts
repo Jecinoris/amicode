@@ -12,5 +12,8 @@ export default defineConfig({
   },
   test: {
     exclude: ["**/node_modules/**", "**/dist/**", "**/slow/**"],
+    // Several tests rebuild dist/amicode.cjs. One file at a time keeps that
+    // write from landing under another file's require().
+    fileParallelism: false,
   },
 });

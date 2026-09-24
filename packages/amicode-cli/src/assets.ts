@@ -27,7 +27,11 @@ export interface AssetReport {
  *  import.meta.url is the real module URL. */
 export function packageDir(argv1: string | undefined = process.argv[1]): string {
   if (argv1 && argv1.endsWith(join("dist", "amicode.cjs"))) return join(dirname(argv1), "..");
-  return join(dirname(fileURLToPath(import.meta.url)), "..");
+  const metaUrl = import.meta.url;
+  if (metaUrl) return join(dirname(fileURLToPath(metaUrl)), "..");
+  // The cjs bundle has no import.meta. Callers that load it from a test runner
+  // pass AMICODE_ASSET_ROOT, so this value is not used as the asset root.
+  return dirname(argv1 ?? process.cwd());
 }
 
 /** Dev default is the sibling extension package. A non-empty AMICODE_ASSET_ROOT
