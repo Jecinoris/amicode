@@ -1,9 +1,10 @@
-// `amicode` — doctor, config, env, and the foreground TUI. No vscode import.
+// `amicode` — doctor, config, env, auth, and the foreground TUI. No vscode import.
 import { homedir } from "node:os";
 import { checkAssets, formatReport, packageDir, reportOk, resolveAssetRoot } from "./assets.js";
+import { runtimeReport } from "./doctor.js";
 import { CliSettingsError, cliSettingsPath, readCliSettings, type CliSettings } from "./settings.js";
 
-const USAGE = "usage: amicode doctor\n       amicode config\n       amicode env\n";
+const USAGE = "usage: amicode doctor\n       amicode config\n       amicode env\n       amicode auth\n";
 
 export async function run(
   argv: string[],
@@ -17,7 +18,21 @@ export async function run(
   if (command === "doctor") {
     const root = resolveAssetRoot(env, packageDir());
     const report = checkAssets(root);
-    return { code: reportOk(report) ? 0 : 1, stdout: formatReport(report), stderr: "" };
+    const home = env.HOME?.trim() || homedir();
+    let settings: CliSettings = {};
+    try {
+      settings = readCliSettings(cliSettingsPath(home));
+    } catch (e) {
+      if (!(e instanceof CliSettingsError)) throw e;
+    }
+    return {
+      code: reportOk(report) ? 0 : 1,
+      stdout: formatReport(report) + runtimeReport({ home, env, settings }),
+      stderr: "",
+    };
+  }
+  if (command === "auth") {
+    return launchAuth(env, cwd);
   }
   if (command === "config") {
     try {
@@ -54,6 +69,21 @@ export async function run(
     }
   }
   return { code: 64, stdout: "", stderr: `amicode: unknown command ${JSON.stringify(command)}\n${USAGE}` };
+}
+
+async function launchAuth(env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  const assetRoot = resolveAssetRoot(env, packageDir());
+  const { binaryReady, launchOpencode, vendoredOpencodeBinary } = await import("./launch.js");
+  const binary = vendoredOpencodeBinary(assetRoot);
+  if (!binaryReady(binary)) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: `amicode: vendored opencode missing or not executable (${binary})\nrun amicode doctor\n`,
+    };
+  }
+  const code = await launchOpencode({ binary, cwd, env, args: ["auth", "login"] });
+  return { code, stdout: "", stderr: "" };
 }
 
 async function launchTui(env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {

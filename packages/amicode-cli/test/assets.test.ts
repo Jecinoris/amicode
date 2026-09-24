@@ -92,11 +92,25 @@ describe("amicode doctor", () => {
     expect(result.stderr).toBe("");
   });
 
-  it("exits 1 when an asset is missing", async () => {
+  it("exits 1 when an asset is missing and still prints the runtime lines", async () => {
     const asset = fixture();
-    const result = await run(["doctor"], { ...process.env, AMICODE_ASSET_ROOT: join(asset, "missing") });
+    const home = mkdtempSync(join(tmpdir(), "amicode-cli-doctor-home-"));
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      XDG_DATA_HOME: join(home, "data"),
+      AMICODE_ASSET_ROOT: join(asset, "missing"),
+    };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.OPENAI_API_KEY;
+    delete env.GOOGLE_API_KEY;
+    delete env.OPENROUTER_API_KEY;
+    delete env.OPENCODE_API_KEY;
+    const result = await run(["doctor"], env);
     expect(result.code).toBe(1);
     expect(result.stdout).toContain("fail  AGENTS.md");
+    expect(result.stdout).toContain(`pass  node  ${process.version}`);
+    expect(result.stdout).toContain("missing — solves will block");
   });
 
   it("refuses to start the TUI when the vendored binary is missing", async () => {

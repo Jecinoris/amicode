@@ -38,9 +38,8 @@ if [[ -z "$VERSION" ]]; then
 fi
 [[ "$VERSION" != */* && -n "$VERSION" ]] || die "version must be a single path segment (got ${VERSION})"
 
-if [[ ! -f "$PKG/dist/amicode.cjs" ]]; then
-  (cd "$PKG" && node esbuild.config.mjs)
-fi
+# Always rebuild so a re-install ships the CLI that is in this checkout.
+(cd "$PKG" && node esbuild.config.mjs)
 [[ -f "$PKG/dist/amicode.cjs" ]] || die "CLI bundle missing after build ($PKG/dist/amicode.cjs)"
 
 KEY="$(node -p "process.platform + '-' + process.arch")"
