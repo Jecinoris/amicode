@@ -8,8 +8,9 @@
 # The tree is the round-1 asset list plus exemplars/, the julia/ sources, and the
 # bundled CLI at bin/dist/amicode.cjs (CJS; the session config loader cannot be
 # ESM). Node stays on PATH. The whole opencode-plugin/ directory is copied.
-# Project.toml and Manifest.toml are also placed in ~/.amico/julia. When julia
-# is on PATH, that project is instantiated unless --no-instantiate is set.
+# Project.toml and Manifest.toml are placed in ~/.amico/julia. Install does not
+# precompile them. Pass --instantiate to run Pkg.instantiate, the same compile
+# the extension runs only from "Amicode: Setup Julia".
 set -euo pipefail
 
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +20,7 @@ ASSET_ROOT="$REPO/packages/extension"
 LAUNCHER_DIR="$REPO/packages/amico-run/launcher"
 JULIA_DIR="${HOME}/.amico/julia"
 VERSION=""
-INSTANTIATE=1
+INSTANTIATE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --launcher-dir) LAUNCHER_DIR="${2:?}"; shift 2 ;;
     --julia-dir) JULIA_DIR="${2:?}"; shift 2 ;;
     --version) VERSION="${2:?}"; shift 2 ;;
+    --instantiate) INSTANTIATE=1; shift ;;
     --no-instantiate) INSTANTIATE=0; shift ;;
     *) echo "amicode install: unknown argument $1" >&2; exit 64 ;;
   esac
