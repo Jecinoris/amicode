@@ -12,7 +12,10 @@ function fixture(): { asset: string; launcher: string } {
   mkdirSync(join(asset, "opencode-plugin"), { recursive: true });
   mkdirSync(join(asset, "bin", "dist"), { recursive: true });
   mkdirSync(join(asset, "templates"), { recursive: true });
-  for (const dir of ["scores", "packs", "skills"]) mkdirSync(join(asset, dir), { recursive: true });
+  for (const dir of ["scores", "packs", "skills", "exemplars", "julia"]) mkdirSync(join(asset, dir), { recursive: true });
+  writeFileSync(join(asset, "exemplars", "index.json"), "{}\n");
+  writeFileSync(join(asset, "julia", "Project.toml"), "[deps]\n");
+  writeFileSync(join(asset, "julia", "Manifest.toml"), "manifest\n");
   writeFileSync(join(asset, "AGENTS.md"), "julia {{JULIA_PROJECT}}\n");
   writeFileSync(join(asset, "templates", "solve_template.jl"), "template\n");
   writeFileSync(join(asset, "opencode-plugin", "amicode_context.ts"), "export {}\n");
@@ -43,24 +46,37 @@ process.exit(0);
   return { asset, launcher };
 }
 
-function install(prefix: string, asset: string, launcher: string): void {
-  execFileSync("bash", [installScript, "--prefix", prefix, "--asset-root", asset, "--launcher-dir", launcher], {
-    cwd: join(import.meta.dirname, ".."),
-  });
+function install(prefix: string, asset: string, launcher: string, juliaDir: string): void {
+  execFileSync(
+    "bash",
+    [
+      installScript,
+      "--prefix",
+      prefix,
+      "--asset-root",
+      asset,
+      "--launcher-dir",
+      launcher,
+      "--julia-dir",
+      juliaDir,
+      "--no-instantiate",
+    ],
+    { cwd: join(import.meta.dirname, "..") },
+  );
 }
 
 describe("amicode install", () => {
   it("installs a versioned tree and doctor passes outside the repo", () => {
     const script = readFileSync(installScript, "utf8");
     expect(script).not.toContain("install-extension");
-    expect(script).not.toMatch(/\bjulia\b/);
 
     const { asset, launcher } = fixture();
     const home = mkdtempSync(join(tmpdir(), "amicode-cli-install-home-"));
     const prefix = join(home, ".local");
+    const juliaDir = join(home, ".amico", "julia");
     const version = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")).version as string;
-    install(prefix, asset, launcher);
-    install(prefix, asset, launcher);
+    install(prefix, asset, launcher, juliaDir);
+    install(prefix, asset, launcher, juliaDir);
 
     const tree = join(prefix, "share", "amicode", version);
     const bin = join(prefix, "bin", "amicode");
@@ -68,6 +84,9 @@ describe("amicode install", () => {
     expect(readFileSync(join(tree, "opencode-plugin", "setup_state.ts"), "utf8")).toContain("sibling");
     expect(existsSync(join(tree, "extension.js"))).toBe(false);
     expect(existsSync(join(tree, "bin", "dist", "amicode.cjs"))).toBe(true);
+    expect(readFileSync(join(tree, "exemplars", "index.json"), "utf8")).toBe("{}\n");
+    expect(readFileSync(join(juliaDir, "Project.toml"), "utf8")).toBe("[deps]\n");
+    expect(readFileSync(join(juliaDir, "Manifest.toml"), "utf8")).toBe("manifest\n");
     const shim = readFileSync(join(tree, "bin", "amicode"), "utf8");
     expect(shim).toContain("AMICODE_ASSET_ROOT");
     expect(shim).toContain('exec node "$ROOT/bin/dist/amicode.cjs"');
@@ -85,7 +104,7 @@ describe("amicode install", () => {
     const { asset, launcher } = fixture();
     const home = mkdtempSync(join(tmpdir(), "amicode-cli-install-tui-"));
     const prefix = join(home, ".local");
-    install(prefix, asset, launcher);
+    install(prefix, asset, launcher, join(home, ".amico", "julia"));
     const elsewhere = join(home, "not-the-repo");
     mkdirSync(elsewhere);
     const receipt = join(home, "receipt.json");
