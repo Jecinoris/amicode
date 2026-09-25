@@ -841,6 +841,7 @@
     "packages/app/src/pages/session/v2/review-panel-v2.tsx": "a3cd899538a738d0236ecbe9e292928ff14e48d3646f2b045dc25880bc7f3ee3",
     "packages/opencode/src/cli/cmd/run/footer.question.tsx": "c9a1b335c9c7d8446d15c58c8808ea857f8f238c8a4047121f49599296922f39",
     "packages/opencode/src/cli/cmd/run/question.shared.ts": "f4b8ab69c18e66d3efea505f3d2c8c5476bba78d46b0f30bc52da4386b19e478",
+    "packages/opencode/src/cli/ui.ts": "4858c7aa74a80facfae3a58a2a1cd2199297c5d491fab1bb6430f3e2ac37db97",
     "packages/opencode/src/server/amicode/widgets-src/jump-back-in.ts": "a82bf11004b71c7ac6e0357c45a0d7532aad4ee6af16e048ae86ef9bf3799fef",
     "packages/opencode/test/server/fixtures/credentials/cloud.json": "431bdf114031da38975538384e21ab0ec7206a0859859f0bf87345b8c360829e",
     "packages/opencode/test/server/fixtures/credentials/pasqal.json": "d3c775cc498fe3029d9ac234d9eaa9eaffa1ad8656e12a5aca1355c733276736",
@@ -858,7 +859,10 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/tui/src/component/logo.tsx": "c8eb8e6511edf0a0b117a20a74947cff98074e54bdb415ce0c188463f3b650f9",
+    "packages/tui/src/logo.ts": "4f2a3de6368698cfea610440c7127d18d74d5d04c605f26dab9fcb9c9dea0ea1",
+    "packages/tui/src/util/presentation.ts": "dcc564a7307873cc707e41b5fc804f0ebb28a4dbfef18c57c9049842f3e612ec"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -892,7 +896,7 @@
     },
     "packages/opencode": {
       "A": 69,
-      "M": 81,
+      "M": 82,
       "D": 0
     },
     "packages/schema": {
@@ -919,10 +923,15 @@
       "A": 152,
       "M": 62,
       "D": 0
+    },
+    "packages/tui": {
+      "A": 0,
+      "M": 3,
+      "D": 0
     }
   },
   "counts": {
-    "overlay_total": 851,
+    "overlay_total": 855,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1760,6 +1769,7 @@
     "packages/app/src/pages/session/v2/review-panel-v2.tsx": "M",
     "packages/opencode/src/cli/cmd/run/footer.question.tsx": "M",
     "packages/opencode/src/cli/cmd/run/question.shared.ts": "M",
+    "packages/opencode/src/cli/ui.ts": "M",
     "packages/opencode/src/server/amicode/widgets-src/jump-back-in.ts": "A",
     "packages/opencode/test/server/fixtures/credentials/cloud.json": "A",
     "packages/opencode/test/server/fixtures/credentials/pasqal.json": "A",
@@ -1777,7 +1787,10 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/tui/src/component/logo.tsx": "M",
+    "packages/tui/src/logo.ts": "M",
+    "packages/tui/src/util/presentation.ts": "M"
   },
   "upstream_base_archive_sha256": "4b5f2e5edfc796082a353fd09c1b1dec3e7a108a4b080fe3a86b12d9fa59fae6"
 }
