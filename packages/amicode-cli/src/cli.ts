@@ -4,7 +4,8 @@ import { checkAssets, formatReport, packageDir, reportOk, resolveAssetRoot } fro
 import { runtimeReport } from "./doctor.js";
 import { CliSettingsError, cliSettingsPath, readCliSettings, type CliSettings } from "./settings.js";
 
-const USAGE = "usage: amicode doctor\n       amicode config\n       amicode env\n       amicode auth\n";
+const USAGE =
+  "usage: amicode doctor\n       amicode config\n       amicode env\n       amicode auth\n       amicode auth harmoniqs [--key <api-key>]\n";
 
 export async function run(
   argv: string[],
@@ -32,6 +33,24 @@ export async function run(
     };
   }
   if (command === "auth") {
+    if (argv[1] === "harmoniqs") {
+      let rest = argv.slice(2);
+      let keyFromFlag: string | undefined;
+      if (rest[0] === "--key") {
+        if (rest[1] === undefined) {
+          return { code: 64, stdout: "", stderr: `amicode: --key requires a value\n${USAGE}` };
+        }
+        keyFromFlag = rest[1];
+        rest = rest.slice(2);
+      }
+      if (rest[0] !== undefined) {
+        return { code: 64, stdout: "", stderr: `amicode: unexpected argument ${JSON.stringify(rest[0])}\n${USAGE}` };
+      }
+      return launchHarmoniqsAuth(env, keyFromFlag);
+    }
+    if (argv[1] !== undefined) {
+      return { code: 64, stdout: "", stderr: `amicode: unknown auth target ${JSON.stringify(argv[1])}\n${USAGE}` };
+    }
     return launchAuth(env, cwd);
   }
   if (command === "config") {
@@ -69,6 +88,33 @@ export async function run(
     }
   }
   return { code: 64, stdout: "", stderr: `amicode: unknown command ${JSON.stringify(command)}\n${USAGE}` };
+}
+
+/** Key precedence: --key flag, then AMICODE_HARMONIQS_API_KEY, then an
+ *  interactive (or piped-line) prompt. --key is convenient for one-off manual
+ *  runs but — like any secret passed as a CLI argument — is visible to other
+ *  processes on the same machine via the process list; prefer the env var for
+ *  scripted/automated provisioning (see remote-install.sh). */
+async function launchHarmoniqsAuth(
+  env: NodeJS.ProcessEnv,
+  keyFromFlag?: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { harmoniqsPaths, promptApiKey, writeHarmoniqsAuth } = await import("./harmoniqs_auth.js");
+  const home = env.HOME?.trim() || homedir();
+  const paths = harmoniqsPaths(home, env);
+  const fromFlag = keyFromFlag?.trim() ?? "";
+  const fromEnv = env.AMICODE_HARMONIQS_API_KEY?.trim() ?? "";
+  const apiKey = fromFlag !== "" ? fromFlag : fromEnv !== "" ? fromEnv : await promptApiKey();
+  try {
+    writeHarmoniqsAuth({ apiKey, ...paths });
+  } catch (e) {
+    return { code: 64, stdout: "", stderr: `${e instanceof Error ? e.message : String(e)}\n` };
+  }
+  return {
+    code: 0,
+    stdout: `harmoniqs provider written to ${paths.configPath}\ncredential stored in ${paths.authPath}\n`,
+    stderr: "",
+  };
 }
 
 async function launchAuth(env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
