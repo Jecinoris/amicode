@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,18 +122,19 @@ describe("amicode TUI", () => {
     expect(JSON.stringify(recorded)).not.toContain(password);
   });
 
-  it("refuses to spawn when a live handshake has a different config", async () => {
-    const password = "conflict-password-not-for-stdout";
+  it("starts a new TUI when a live handshake has a different config", async () => {
+    const password = "extension-password-not-for-stdout";
     const { code, stderr, receipt } = await launchWithHandshake({
       pid: process.pid,
       password,
       hash: "extension-session",
     });
-    expect(code).toBe(1);
-    expect(stderr).toContain("port 43117");
-    expect(stderr).toContain("different session config");
-    expect(stderr).not.toContain(password);
-    expect(existsSync(receipt)).toBe(false);
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    const recorded = JSON.parse(readFileSync(receipt, "utf8")) as { argv: string[]; passwordMatchesExpect: boolean };
+    expect(recorded.argv).toEqual([]);
+    expect(recorded.passwordMatchesExpect).toBe(false);
+    expect(JSON.stringify(recorded)).not.toContain(password);
   });
 
   it("starts a new TUI when the handshake pid is dead", async () => {

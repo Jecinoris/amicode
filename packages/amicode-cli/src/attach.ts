@@ -1,14 +1,14 @@
-// Round 5: one server. A live handshake whose config hash matches this
-// session is joined with `opencode attach`. A live handshake with a different
-// config is a conflict. A missing record or a dead pid falls through to a
-// new TUI.
+// A live handshake whose config hash matches this session is joined with
+// `opencode attach`. Anything else starts a new TUI. The extension always
+// serves on 43117 when a Cursor window opens, and that config is a different
+// asset tree, so a hash mismatch must not block the CLI. The TUI listens on
+// port 0 (an ephemeral port), not 43117.
 import { join } from "node:path";
 import { handshakePath, hashString, readHandshake } from "../../extension/src/server_handshake.js";
 
 export type ServerChoice =
   | { action: "launch" }
-  | { action: "attach"; url: string; password: string }
-  | { action: "conflict"; port: number };
+  | { action: "attach"; url: string; password: string };
 
 /** ~/.amico/ops/server/standalone.json under `home`. */
 export function handshakeFile(home: string): string {
@@ -38,17 +38,10 @@ export function chooseServer(
   const read = readHandshake(file);
   if (read.status !== "ok") return { action: "launch" };
   if (!alive(read.record.pid)) return { action: "launch" };
-  if (read.record.configHash !== hash) return { action: "conflict", port: read.record.port };
+  if (read.record.configHash !== hash) return { action: "launch" };
   return {
     action: "attach",
     url: `http://127.0.0.1:${read.record.port}`,
     password: read.record.password,
   };
-}
-
-export function conflictMessage(port: number): string {
-  return (
-    `amicode: an extension server is still running on port ${port} with a different session config.\n` +
-    "Quit that server before starting amicode here.\n"
-  );
 }

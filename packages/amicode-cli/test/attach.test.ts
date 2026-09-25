@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chooseServer, conflictMessage, handshakeFile } from "../src/attach.js";
+import { chooseServer, handshakeFile } from "../src/attach.js";
 
 function record(dir: string, fields: { pid: number; configHash: string; port?: number; password?: string }): string {
   const file = handshakeFile(dir);
@@ -44,12 +44,9 @@ describe("chooseServer", () => {
     });
   });
 
-  it("conflicts when the pid is alive and the config hash differs", () => {
+  it("launches its own TUI when a live server has a different config", () => {
     const home = mkdtempSync(join(tmpdir(), "amicode-attach-"));
     const file = record(home, { pid: 7, configHash: "extension", port: 43117, password: "from-extension" });
-    expect(chooseServer(file, "cli", () => true)).toEqual({ action: "conflict", port: 43117 });
-    expect(conflictMessage(43117)).not.toContain("from-extension");
-    expect(conflictMessage(43117)).toContain("port 43117");
-    expect(conflictMessage(43117)).toContain("different session config");
+    expect(chooseServer(file, "cli", () => true)).toEqual({ action: "launch" });
   });
 });
