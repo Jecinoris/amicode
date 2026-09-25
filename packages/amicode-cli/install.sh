@@ -112,6 +112,7 @@ fi
 exec node "$ROOT/bin/dist/amicode.cjs" "$@"
 EOF
 chmod +x "$STAGE/bin/amicode"
+printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
 rm -rf "$DEST"
 mv "$STAGE" "$DEST"
