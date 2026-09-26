@@ -120,12 +120,12 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
-/** #1572: when amicode.activateEagerly=false, the local server's bring-up
+/** #1572: when amicode.chat.autoOpen=false, the local server's bring-up
  *  (adopt/spawn/keepalive/service boot/auto-open) is NOT run at activation —
  *  its closure is stashed here instead, so the first on-demand command that
  *  needs the server (Open Chat, etc.) can trigger the exact same bring-up
- *  lazily via ensureLocalServer(). Left undefined in the default (eager) case,
- *  and in fleet-client mode / when no binary is available — nothing to defer. */
+ *  lazily via ensureLocalServer(). Left undefined in the default (autoOpen)
+ *  case, and in fleet-client mode / when no binary is available — nothing to defer. */
 let deferredLocalServerStart: (() => Promise<void>) | undefined;
 let localServerStartPromise: Promise<void> | undefined;
 /** ensureLocalServer() is safe to call unconditionally from any on-demand
@@ -878,7 +878,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // #1572: the local server's bring-up (adopt/spawn/keepalive/service boot/
     // auto-open, the whole body below) is wrapped in a closure so it can run
     // either eagerly (today's default, unchanged behavior) or lazily on first
-    // on-demand command use when amicode.activateEagerly is false. See
+    // on-demand command use when amicode.chat.autoOpen is false. See
     // ensureLocalServer() / deferredLocalServerStart above.
     const startLocalServer = async (): Promise<void> => {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
@@ -1437,17 +1437,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     }; // end startLocalServer
 
-    // #1572: amicode.activateEagerly (default true) preserves today's behavior
-    // exactly — the server bring-up above runs unconditionally at activation.
-    // Set to false to skip it here; the first on-demand command that needs the
-    // server (Open Chat, etc.) triggers the identical bring-up lazily via
-    // ensureLocalServer(), so on-demand use is never broken by this setting.
-    const activateEagerly = vscode.workspace.getConfiguration("amicode").get<boolean>("activateEagerly", true);
-    if (activateEagerly) {
+    // #1572: no separate setting for this — amicode.chat.autoOpen (default
+    // true) already means "bring the server and chat up automatically", so it
+    // is the single switch for both. Off means neither happens automatically;
+    // the server bring-up above only runs once an on-demand command needs it
+    // (Open Chat, etc.), via the identical closure through ensureLocalServer().
+    const autoOpenOnActivate = vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true);
+    if (autoOpenOnActivate) {
       await startLocalServer();
     } else {
       opencodeChannel.appendLine(
-        "[boot] amicode.activateEagerly=false — deferring opencode server start until an on-demand command needs it",
+        "[boot] amicode.chat.autoOpen=false — deferring opencode server start until an on-demand command needs it",
       );
       deferredLocalServerStart = startLocalServer;
     }
