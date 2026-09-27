@@ -137,6 +137,7 @@ function ensureLocalServer(): Promise<void> {
   if (!localServerStartPromise) {
     const start = deferredLocalServerStart;
     deferredLocalServerStart = undefined;
+    statusBar?.setIdle(false);
     localServerStartPromise = start();
   }
   return localServerStartPromise;
@@ -1449,6 +1450,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(
         "[boot] amicode.chat.autoOpen=false — deferring opencode server start until an on-demand command needs it",
       );
+      statusBar?.setIdle(true);
       deferredLocalServerStart = startLocalServer;
     }
   }
