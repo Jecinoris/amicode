@@ -1,87 +1,116 @@
-# Amicode CLI, one round at a time
+# Amicode CLI
 
-A Codex-shaped client: one command on `PATH`, foreground TUI, current directory is the project. The face is the vendored `opencode` binary. Amicode's job is to assemble the same session the extension assembles in [`packages/extension/src/extension.ts`](../packages/extension/src/extension.ts) and then exec that binary.
+Amicode also ships as a terminal client. `amicode` is one command on `PATH`
+with a foreground TUI — no editor, no webview. It assembles the same session
+[`extension.ts`](../packages/extension/src/extension.ts) builds for VS Code —
+the same platform skills, vault context, and `amico-run` solves — and hands it
+straight to the vendored `opencode` binary. `amico` stays the bookkeeping CLI;
+`amicode` is the chat-and-solve one.
 
-`amico` stays the bookkeeping CLI. The new command is `amicode`.
+Out of this build: the webview, Run Inspector, device panels, and the
+extension-host `/amicode/*` service — those stay editor-only. Chat, skills,
+vault context, `amicode_*` tools, and `amico-run` solves all work from the
+terminal exactly as they do in VS Code.
 
-Out of this build: the webview, Run Inspector, device panels, and the extension-host `/amicode/*` service. Chat, skills, vault context, `amicode_*` tools, and `amico-run` solves are in.
+## Install
 
-```mermaid
-flowchart TD
-  shim["amicode shim"] --> prep["prepareOpencodeProject"]
-  prep --> cfg["buildOpencodeConfigContent"]
-  cfg --> env["buildServerSpawnEnv"]
-  env --> gate{"live server on handshake port?"}
-  gate -->|yes and config matches| attach["opencode attach"]
-  gate -->|no| tui["opencode TUI in this process"]
-  gate -->|yes but config differs| stop["refuse and print why"]
+Two paths, both idempotent — a second run replaces the same version tree and
+relinks the command:
+
+- **From a checkout.** [`packages/amicode-cli`](../packages/amicode-cli) is a
+  workspace package; its asset root defaults to the sibling `packages/extension`
+  tree (override with `AMICODE_ASSET_ROOT`). No separate install step needed.
+- **Standalone.** [`install.sh`](../packages/amicode-cli/install.sh) copies a
+  versioned tree — the vendored `opencode` binary, the whole `opencode-plugin/`
+  directory, skills, packs, scores, templates, the Julia project files, and the
+  bundled `bin/dist/amicode.cjs` — into `~/.local/share/amicode/<version>/` and
+  links `~/.local/bin/amicode`.
+  [`remote-install.sh`](../packages/amicode-cli/remote-install.sh) does the same
+  from a release archive, no git checkout needed:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Jecinoris/amicode/feat/amicode-cli/packages/amicode-cli/remote-install.sh | bash
+  ```
+
+  Neither path calls `code --install-extension` or touches any VS Code state.
+  Julia itself stays optional at install time — the project files land in
+  `~/.amico/julia`, and `--instantiate` runs `Pkg.instantiate()` on them (the
+  same compile the extension runs from **Amicode: Setup Julia**).
+
+## Commands
+
+```
+amicode                              open the TUI (or attach — see below)
+amicode doctor                       asset tree + runtime checks
+amicode config                       print the assembled opencode session config
+amicode env                          print the spawn env's key names (never values)
+amicode auth                         opencode auth login, for its own provider list
+amicode auth harmoniqs [--key <api-key>]
+                                      register Harmoniqs as a provider directly
 ```
 
-## Round 1 — See the asset tree
+`amicode doctor` checks the asset tree is complete — the vendored binary for
+your platform, the plugin directory, the MCP bundle, `AGENTS.md`, and the
+`scores/` / `packs/` / `skills/` / `templates/` directories — then appends
+three runtime facts that don't change its exit code: the Node version,
+whether a model provider is authenticated, and whether a Julia project exists
+(reported as "missing — solves will block" if not).
 
-Add [`packages/amicode-cli`](../packages/amicode-cli) (workspace package, Node, no `vscode` import). Its only job this round is to resolve an asset root and report what is there.
+`amicode config` and `amicode env` build from
+[`buildSessionConfig`](../packages/amicode-cli/src/session.ts) and
+[`buildCliSpawnEnv`](../packages/amicode-cli/src/spawn.ts) — the same
+`prepareOpencodeProject`, `buildOpencodeConfigContent`, and
+`buildServerSpawnEnv` calls the extension itself makes, so a CLI session and
+an editor session opened on the same directory carry the same skills, vault
+mounts, and MCP wiring.
 
-- Dev root: `packages/extension` (override with `AMICODE_ASSET_ROOT`).
-- Required files, checked by `amicode doctor`:
-  - `vendor/opencode/<platform>/opencode`
-  - `opencode-plugin/` as a directory (Bun loads [`amicode_context.ts`](../packages/extension/opencode-plugin/amicode_context.ts) and its sibling imports from disk; do not bundle the plugin)
-  - `bin/dist/mcp-amico.mjs`
-  - `AGENTS.md`, `scores/`, `packs/`, `skills/`, `templates/`
-  - `bin/launcher/amico` and `amico-run` (dev fallback: [`packages/amico-run/launcher`](../packages/amico-run/launcher), same rule as [`resolveAmicoRunBinDir`](../packages/extension/src/opencode_paths.ts))
-- `amicode doctor` exits 0 when the tree is complete, non-zero listing each missing path. No config write, no process spawn.
+Harmoniqs isn't in opencode's own provider list, so `opencode auth login`
+can't register it; `amicode auth harmoniqs` writes the same provider entry
+and auth-store credential the extension's onboarding writes instead. The key
+comes from `--key`, then `AMICODE_HARMONIQS_API_KEY`, then an interactive
+(never-echoed) prompt, and is never printed.
 
-Done when: from the repo, `amicode doctor` prints the root and a pass/fail line per asset.
+## Settings
 
-## Round 2 — Build the session config from the current directory
+`~/.amico/cli.json`, a plain file, no VS Code required. A missing file means
+the same defaults the extension uses when its own settings are unset:
+`~/.amico/julia`, the auto vault stack, bundled skills.
 
-Call the existing Node prep. Do not copy it.
+```jsonc
+{
+  "juliaProject": "~/.amico/julia", // optional override, ~ expands under $HOME
+  "vaultDir": "...",
+  "skillRoots": ["..."],
+  "defaultModel": "..."
+}
+```
 
-- [`prepareOpencodeProject`](../packages/extension/src/opencode_config.ts) with `agentsSrc`, `templateSrc` (HP template when [`readSolverModeState`](../packages/extension/src/solver_mode.ts) says `hp`), `workspaceFolders: [cwd]`, and explicit `scoresRoot` / `packsRoot` / skill library root pointing at the asset root.
-- Stable project dir: `~/.amico/cli/projects/<hash of cwd>/opencode-project`. This replaces the extension's `storageUri` path. Re-preparing overwrites in place.
-- Settings, file only, no VS Code: `~/.amico/cli.json` with optional `juliaProject`, `vaultDir`, `skillRoots`, `defaultModel`. Empty file means the same defaults the extension uses when those settings are unset (`~/.amico/julia`, auto vault stack, bundled skills).
-- [`buildOpencodeConfigContent`](../packages/extension/src/opencode_config.ts) today hardcodes the MCP bundle via `__dirname` (`DEFAULT_MCP_DIST_PATH`). Add an explicit MCP path argument so a bundled CLI does not look for `bin/bin/dist/mcp-amico.mjs`. Plugin entry stays the absolute path to `amicode_context.ts`.
-- `amicode config` prints the JSON. A test feeds the same inputs the extension config tests use and checks `plugin`, `mcp.amicode`, `instructions`, and `default_agent: "plan"`.
+## Sharing a server with the extension
 
-Done when: `amicode config` in a repo prints a config whose plugin and MCP paths exist on disk.
+`amicode` with no subcommand reads
+[`~/.amico/ops/server/standalone.json`](../packages/extension/src/server_handshake.ts).
+If it names a live process (PID alive) whose config hash matches the session
+`amicode` just assembled for the current directory, it runs `opencode attach`
+against that server instead of opening a second one. Anything else — no
+handshake, a dead PID, or a hash for a *different* project — opens its own
+foreground TUI on an ephemeral port, not port 43117.
 
-## Round 3 — Build the process environment
+A hash mismatch on its own is not treated as a conflict to refuse: the
+extension always serves on 43117 for whichever editor window is open, which
+is routinely a different asset tree than the one a terminal session in some
+other directory just assembled, and that must never block the CLI from
+working on its own project
+([`chooseServer`](../packages/amicode-cli/src/attach.ts)).
 
-Reuse [`buildServerSpawnEnv`](../packages/extension/src/server_auth.ts). The CLI mints `OPENCODE_SERVER_PASSWORD` the same way the extension does for a cold spawn, prepends the `amico` launcher dir to `PATH`, and sets `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` plus the headless plotting vars already in that function.
+The CLI never starts `opencode serve` or the amicode service itself — the
+foreground process *is* the session. Quitting the TUI ends it; nothing is
+left running.
 
-Also write the setup-state file the context plugin already reads ([`writeSetupStateFile`](../packages/extension/src/setup_state.ts) / the boot call in `extension.ts`), so a missing Julia toolchain surfaces inside the session instead of as a new CLI error.
+## Julia and provider auth
 
-`amicode env` prints key names only. The password never appears in stdout.
-
-Done when: a unit test asserts `PATH`, `OPENCODE_CONFIG_CONTENT`, and `OPENCODE_SERVER_PASSWORD` are set, and the printed env listing does not contain the password.
-
-## Round 4 — Open the TUI
-
-`amicode` with no subcommand execs the vendored binary in the foreground, cwd = the project directory, env from round 3, no extra args. No args is the TUI; that is what [`terminal.ts`](../packages/extension/src/terminal.ts) already does. Do not daemonize, do not start `opencode serve`, do not start the amicode service.
-
-The process is the session. Quitting the TUI returns to the shell and the server exits with it.
-
-Done when: in this repo, `amicode` opens a TUI that has the plan agent, the context plugin loaded (stderr line `[amicode-context] loaded`), and `amico-run` on the tool `PATH`.
-
-## Round 5 — Do not start a second server
-
-Read [`~/.amico/ops/server/standalone.json`](../packages/extension/src/server_handshake.ts). If the record is valid, the pid is alive, and the config hash matches the JSON from round 2, exec `opencode attach http://127.0.0.1:<port>` with that record's password instead of a new TUI server. If a server is alive but the hash differs, exit with a message naming the conflict (extension session vs this config) and do not spawn. If the record is absent or the pid is dead, fall through to round 4.
-
-Done when: with the extension's server up, `amicode` attaches; with a stale handshake, it says so and does not bind the port.
-
-## Round 6 — Install without the extension
-
-An installer script (next to the package, idempotent) copies one versioned tree to `~/.local/share/amicode/<version>/` and links `~/.local/bin/amicode`.
-
-The tree is the round-1 asset list plus the bundled CLI (`bin/dist/amicode.mjs` and a small launcher). It includes the whole `opencode-plugin/` directory, not a single file. It does not call `code --install-extension`.
-
-`AMICODE_ASSET_ROOT` inside the installed shim points at that tree. Node stays a machine dependency (`node` on `PATH`, the MCP server is `node mcp-amico.mjs`). Julia stays optional at install time.
-
-Done when: from a directory that is not this repo, with the extension uninstalled, `amicode doctor` passes and `amicode` opens the TUI.
-
-## Round 7 — Login, and prove a solve can start
-
-`amicode auth` execs `<vendored opencode> auth login` and returns. Doctor adds three lines that do not change the exit code of a complete asset tree: Node present, provider auth present, Julia project present or "missing — solves will block".
-
-A manual check, not a CI Julia run: in the TUI, ask for a trivial local command so `amico` resolves; confirm a solve attempt names the Julia gap when the project is absent, and reaches `amico-run` when `~/.amico/julia` exists.
-
-Done when: a fresh machine can install, log in, open a project, and either launch a solve or get the existing setup-state message. No editor panels.
+A solve needs both a Julia project and a model provider. `amicode doctor`
+reports both without blocking on either. In the TUI itself, asking for a
+solve names the gap directly — the Julia-project message if
+`~/.amico/julia` (or the `cli.json` override) doesn't exist, or the normal
+provider-auth prompt if no credential is present — rather than failing
+opaquely.
